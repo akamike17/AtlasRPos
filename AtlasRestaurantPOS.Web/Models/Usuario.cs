@@ -17,7 +17,9 @@ public class Usuario
     public ICollection<SesionCaja> SesionesCajaApertura { get; set; } = new List<SesionCaja>();
     public ICollection<SesionCaja> SesionesCajaCierre { get; set; } = new List<SesionCaja>();
     public ICollection<Comanda> Comandas { get; set; } = new List<Comanda>();
+    public ICollection<Comanda> ComandasCanceladas { get; set; } = new List<Comanda>();
     public ICollection<MovimientoCaja> MovimientosCaja { get; set; } = new List<MovimientoCaja>();
     public ICollection<Pago> Pagos { get; set; } = new List<Pago>();
+    public ICollection<Pago> PagosDevueltos { get; set; } = new List<Pago>();
     public ICollection<Auditoria> Auditorias { get; set; } = new List<Auditoria>();
 }

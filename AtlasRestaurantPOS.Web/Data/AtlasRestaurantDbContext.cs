@@ -171,9 +171,19 @@ public class AtlasRestaurantDbContext : DbContext
                 .HasForeignKey(x => x.IdUsuario)
                 .OnDelete(DeleteBehavior.Restrict);
 
+            e.HasMany(x => x.ComandasCanceladas)
+                .WithOne(x => x.UsuarioCancelacion)
+                .HasForeignKey(x => x.IdUsuarioCancelacion)
+                .OnDelete(DeleteBehavior.Restrict);
+
             e.HasMany(x => x.MovimientosCaja)
                 .WithOne(x => x.Usuario)
                 .HasForeignKey(x => x.IdUsuario)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            e.HasMany(x => x.PagosDevueltos)
+                .WithOne(x => x.UsuarioDevolucion)
+                .HasForeignKey(x => x.IdUsuarioDevolucion)
                 .OnDelete(DeleteBehavior.Restrict);
         });
     }
@@ -296,6 +306,7 @@ public class AtlasRestaurantDbContext : DbContext
 
             e.Property(x => x.Estado).IsRequired().HasMaxLength(50);
             e.Property(x => x.Folio).HasMaxLength(100);
+            e.Property(x => x.MotivoCancelacion).HasMaxLength(500);
             e.Property(x => x.Subtotal).HasPrecision(18, 2);
             e.Property(x => x.Impuestos).HasPrecision(18, 2);
             e.Property(x => x.Descuento).HasPrecision(18, 2);
@@ -311,6 +322,11 @@ public class AtlasRestaurantDbContext : DbContext
             e.HasMany(x => x.Pagos)
                 .WithOne(x => x.Comanda)
                 .HasForeignKey(x => x.IdComanda)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            e.HasOne(x => x.UsuarioCancelacion)
+                .WithMany(x => x.ComandasCanceladas)
+                .HasForeignKey(x => x.IdUsuarioCancelacion)
                 .OnDelete(DeleteBehavior.Restrict);
         });
     }
@@ -339,6 +355,9 @@ public class AtlasRestaurantDbContext : DbContext
             e.Property(x => x.Referencia).HasMaxLength(200);
             e.Property(x => x.ProveedorExterno).HasMaxLength(100);
             e.Property(x => x.IdTransaccionExterna).HasMaxLength(200);
+            e.Property(x => x.MotivoDevolucion).HasMaxLength(500);
+
+            e.HasIndex(x => new { x.IdComanda, x.Devuelto });
 
             e.HasOne(x => x.MetodoPagoCatalogo)
                 .WithMany(x => x.Pagos)
@@ -358,6 +377,11 @@ public class AtlasRestaurantDbContext : DbContext
             e.HasOne(x => x.Usuario)
                 .WithMany(x => x.Pagos)
                 .HasForeignKey(x => x.IdUsuario)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            e.HasOne(x => x.UsuarioDevolucion)
+                .WithMany(x => x.PagosDevueltos)
+                .HasForeignKey(x => x.IdUsuarioDevolucion)
                 .OnDelete(DeleteBehavior.Restrict);
         });
     }

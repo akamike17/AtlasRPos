@@ -344,6 +344,8 @@ Para START / READY / STOP del servidor ASP.NET Core durante pruebas HTTP, la aut
 SERVER_RUNNER.md tiene prioridad sobre reglas genéricas de TESTING.md respecto al ciclo de vida del servidor.
 No duplicar el manual completo.
 
+Las pruebas HTTP que necesiten servidor deben delegar START / READY / STOP y sus errores del runner a SERVER_RUNNER.md.
+
 ---
 
 # Reporte de procesos

@@ -15,9 +15,15 @@ public class Pago
     public string? ProveedorExterno { get; set; }
     public string? IdTransaccionExterna { get; set; }
 
+    public bool Devuelto { get; set; }
+    public DateTime? FechaDevolucion { get; set; }
+    public int? IdUsuarioDevolucion { get; set; }
+    public string? MotivoDevolucion { get; set; }
+
     public Comanda Comanda { get; set; } = null!;
     public MetodoPago? MetodoPagoCatalogo { get; set; }
     public Caja? Caja { get; set; }
     public SesionCaja? SesionCaja { get; set; }
     public Usuario? Usuario { get; set; }
+    public Usuario? UsuarioDevolucion { get; set; }
 }

@@ -8,4 +8,5 @@ public static class TiposMovimientoCaja
     public const string RETIRO = "RETIRO";
     public const string DEPOSITO = "DEPOSITO";
     public const string AJUSTE = "AJUSTE";
+    public const string DEVOLUCION = "DEVOLUCION";
 }

@@ -563,7 +563,7 @@ public class VentasController : Controller
                 }
 
                 var pagado = await _db.Pagos
-                    .Where(p => p.IdComanda == comanda.IdComanda)
+                    .Where(p => p.IdComanda == comanda.IdComanda && !p.Devuelto)
                     .SumAsync(p => (decimal?)p.Importe) ?? 0m;
 
                 var saldo = Redondear(comanda.Total - pagado);
@@ -714,6 +714,297 @@ public class VentasController : Controller
         }
     }
 
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    [Authorize(Roles = "Administrador")]
+    public async Task<IActionResult> CancelarComanda([FromBody] CancelarComandaViewModel modelo)
+    {
+        var (idUsuario, idCaja, idSesion) = ObtenerContexto();
+        if (idUsuario is null || idCaja is null || idSesion is null)
+        {
+            return JsonError("No tienes una sesión de caja activa.");
+        }
+
+        if (modelo is null)
+        {
+            return JsonError("Datos inválidos.");
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return JsonError(ErrorModelState());
+        }
+
+        var motivo = Normalizar(modelo.Motivo);
+        if (string.IsNullOrWhiteSpace(motivo))
+        {
+            return JsonError("El motivo de cancelación es obligatorio.");
+        }
+        if (motivo.Length < 5)
+        {
+            return JsonError("El motivo de cancelación debe tener al menos 5 caracteres.");
+        }
+
+        try
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted);
+            try
+            {
+                if (!await ValidarSesionCajaAsync(idUsuario.Value, idCaja.Value, idSesion.Value))
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("La sesión de caja no está disponible.");
+                }
+
+                var comanda = await ObtenerComandaOperativaAsync(modelo.IdComanda, idUsuario.Value, idCaja.Value, idSesion.Value);
+                if (comanda is null)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("La comanda no existe o no pertenece a tu sesión.");
+                }
+
+                if (comanda.Estado != EstadosComanda.ABIERTA)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("Solo se puede cancelar una comanda abierta.");
+                }
+
+                var tienePagosNoDevueltos = await _db.Pagos
+                    .AnyAsync(p => p.IdComanda == comanda.IdComanda && !p.Devuelto);
+
+                if (tienePagosNoDevueltos)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("La comanda tiene pagos sin devolver. Devuelve los pagos antes de cancelarla.");
+                }
+
+                var estadoAnterior = comanda.Estado;
+                comanda.Estado = EstadosComanda.CANCELADA;
+                comanda.FechaCancelacion = DateTime.Now;
+                comanda.MotivoCancelacion = motivo;
+                comanda.IdUsuarioCancelacion = idUsuario.Value;
+                await _db.SaveChangesAsync();
+
+                await _auditoria.RegistrarAsync(
+                    "Comanda",
+                    comanda.IdComanda.ToString(),
+                    "CANCELAR_COMANDA",
+                    new
+                    {
+                        comanda.IdComanda,
+                        comanda.Folio,
+                        comanda.Estado,
+                        comanda.IdMesa
+                    },
+                    new
+                    {
+                        comanda.IdComanda,
+                        comanda.Folio,
+                        comanda.Estado,
+                        comanda.IdMesa,
+                        comanda.FechaCancelacion,
+                        comanda.MotivoCancelacion,
+                        comanda.IdUsuarioCancelacion
+                    });
+
+                if (comanda.IdMesa is not null)
+                {
+                    var mesa = await _db.Mesas
+                        .FromSqlRaw("SELECT * FROM Mesas WHERE IdMesa = {0} FOR UPDATE", comanda.IdMesa.Value)
+                        .FirstOrDefaultAsync();
+
+                    if (mesa is not null)
+                    {
+                        var estadoAnteriorMesa = mesa.Estado;
+                        mesa.Estado = EstadosMesa.DISPONIBLE;
+                        await _db.SaveChangesAsync();
+
+                        await _auditoria.RegistrarAsync(
+                            "Mesa",
+                            mesa.IdMesa.ToString(),
+                            "LIBERAR_MESA_POR_CANCELACION",
+                            new { mesa.IdMesa, comanda.IdComanda, comanda.Folio, EstadoAnterior = estadoAnteriorMesa },
+                            new { mesa.IdMesa, comanda.IdComanda, comanda.Folio, EstadoNuevo = mesa.Estado });
+                    }
+                }
+
+                await tx.CommitAsync();
+
+                var estado = await ConstruirEstadoAsync(comanda.IdComanda, idCaja.Value, idSesion.Value);
+                return Json(new { ok = true, estado, mensaje = "Comanda cancelada correctamente." });
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error al cancelar comanda {IdComanda}.", modelo.IdComanda);
+            return JsonError("Ocurrió un error al cancelar la comanda.");
+        }
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    [Authorize(Roles = "Administrador")]
+    public async Task<IActionResult> DevolverPago([FromBody] DevolverPagoViewModel modelo)
+    {
+        var (idUsuario, idCaja, idSesion) = ObtenerContexto();
+        if (idUsuario is null || idCaja is null || idSesion is null)
+        {
+            return JsonError("No tienes una sesión de caja activa.");
+        }
+
+        if (modelo is null)
+        {
+            return JsonError("Datos inválidos.");
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return JsonError(ErrorModelState());
+        }
+
+        var motivo = Normalizar(modelo.Motivo);
+        if (string.IsNullOrWhiteSpace(motivo))
+        {
+            return JsonError("El motivo de devolución es obligatorio.");
+        }
+        if (motivo.Length < 5)
+        {
+            return JsonError("El motivo de devolución debe tener al menos 5 caracteres.");
+        }
+
+        var idSucursal = ObtenerClaimInt("IdSucursal");
+        if (idSucursal is null)
+        {
+            return JsonError("No se pudo identificar tu sucursal.");
+        }
+
+        try
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted);
+            try
+            {
+                if (!await ValidarSesionCajaAsync(idUsuario.Value, idCaja.Value, idSesion.Value))
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("La sesión de caja no está disponible.");
+                }
+
+                var pago = await _db.Pagos
+                    .FromSqlRaw("SELECT * FROM Pagos WHERE IdPago = {0} FOR UPDATE", modelo.IdPago)
+                    .FirstOrDefaultAsync();
+
+                if (pago is null)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("El pago no existe.");
+                }
+
+                if (pago.IdCaja != idCaja || pago.IdSesionCaja != idSesion)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("El pago no pertenece a tu sesión de caja.");
+                }
+
+                var comandaPago = await _db.Comandas
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(c => c.IdComanda == pago.IdComanda);
+
+                if (comandaPago is null || comandaPago.IdSucursal != idSucursal)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("El pago no pertenece a tu sucursal.");
+                }
+
+                if (pago.Devuelto)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("El pago ya fue devuelto.");
+                }
+
+                pago.Devuelto = true;
+                pago.FechaDevolucion = DateTime.Now;
+                pago.IdUsuarioDevolucion = idUsuario.Value;
+                pago.MotivoDevolucion = motivo;
+                await _db.SaveChangesAsync();
+
+                if (pago.MetodoPago == "EFECTIVO")
+                {
+                    var movimiento = new MovimientoCaja
+                    {
+                        IdCaja = idCaja.Value,
+                        IdSesionCaja = idSesion,
+                        IdUsuario = idUsuario.Value,
+                        Tipo = TiposMovimientoCaja.DEVOLUCION,
+                        Importe = pago.Importe,
+                        Concepto = $"Devolución de pago {pago.IdPago} de comanda {pago.IdComanda}.",
+                        FechaMovimiento = DateTime.Now
+                    };
+                    _db.MovimientosCaja.Add(movimiento);
+                    await _db.SaveChangesAsync();
+
+                    await _auditoria.RegistrarAsync(
+                        "MovimientoCaja",
+                        movimiento.IdMovimientoCaja.ToString(),
+                        "DEVOLUCION_CAJA",
+                        null,
+                        new
+                        {
+                            movimiento.IdCaja,
+                            IdSesionCaja = movimiento.IdSesionCaja,
+                            movimiento.Tipo,
+                            movimiento.Importe,
+                            movimiento.Concepto,
+                            IdPago = pago.IdPago
+                        });
+                }
+
+                await _auditoria.RegistrarAsync(
+                    "Pago",
+                    pago.IdPago.ToString(),
+                    "DEVOLVER_PAGO",
+                    new
+                    {
+                        pago.IdPago,
+                        pago.IdComanda,
+                        pago.MetodoPago,
+                        pago.Importe,
+                        Devuelto = false
+                    },
+                    new
+                    {
+                        pago.IdPago,
+                        pago.IdComanda,
+                        pago.MetodoPago,
+                        pago.Importe,
+                        pago.Devuelto,
+                        pago.FechaDevolucion,
+                        pago.IdUsuarioDevolucion,
+                        pago.MotivoDevolucion
+                    });
+
+                await tx.CommitAsync();
+
+                var estado = await ConstruirEstadoAsync(pago.IdComanda, idCaja.Value, idSesion.Value);
+                return Json(new { ok = true, estado, mensaje = "Pago devuelto correctamente." });
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error al devolver pago {IdPago}.", modelo.IdPago);
+            return JsonError("Ocurrió un error al devolver el pago.");
+        }
+    }
+
     private async Task<bool> ValidarSesionCajaAsync(int idUsuario, int idCaja, long idSesion)
     {
         return await _db.Cajas
@@ -844,7 +1135,10 @@ public class VentasController : Controller
                         MetodoPago = p.MetodoPago,
                         Importe = p.Importe,
                         FechaPago = p.FechaPago,
-                        Referencia = p.Referencia
+                        Referencia = p.Referencia,
+                        Devuelto = p.Devuelto,
+                        FechaDevolucion = p.FechaDevolucion,
+                        MotivoDevolucion = p.MotivoDevolucion
                     })
                     .ToList()
             })
@@ -855,8 +1149,10 @@ public class VentasController : Controller
             return new ComandaEstadoViewModel { IdComanda = idComanda };
         }
 
-        var pagado = comanda.Pagos.Sum(p => p.Importe);
+        var pagado = comanda.Pagos.Where(p => !p.Devuelto).Sum(p => p.Importe);
         comanda.Saldo = Redondear(comanda.Total - pagado);
+        comanda.EsAdministrador = User.IsInRole("Administrador");
+        comanda.PuedeCancelar = comanda.Estado == EstadosComanda.ABIERTA;
         return comanda;
     }
 

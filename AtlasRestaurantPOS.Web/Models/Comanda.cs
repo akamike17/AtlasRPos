@@ -12,6 +12,9 @@ public class Comanda
     public DateTime? FechaCierre { get; set; }
     public string Estado { get; set; } = string.Empty;
     public string? Folio { get; set; }
+    public DateTime? FechaCancelacion { get; set; }
+    public string? MotivoCancelacion { get; set; }
+    public int? IdUsuarioCancelacion { get; set; }
     public decimal Subtotal { get; set; }
     public decimal Impuestos { get; set; }
     public decimal Descuento { get; set; }
@@ -22,6 +25,7 @@ public class Comanda
     public SesionCaja? SesionCaja { get; set; }
     public Mesa? Mesa { get; set; }
     public Usuario Usuario { get; set; } = null!;
+    public Usuario? UsuarioCancelacion { get; set; }
     public ICollection<ComandaDetalle> Detalles { get; set; } = new List<ComandaDetalle>();
     public ICollection<Pago> Pagos { get; set; } = new List<Pago>();
 }

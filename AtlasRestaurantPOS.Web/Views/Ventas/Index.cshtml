@@ -83,8 +83,12 @@
                     <div class="d-flex justify-content-between"><span>Impuestos</span><span id="lblImpuestos"></span></div>
                     <div class="d-flex justify-content-between fs-5 fw-bold"><span>Total</span><span id="lblTotal"></span></div>
                     <button type="button" class="btn btn-primary w-100 mt-3" id="btnCobrar" onclick="abrirCobrar()">Cobrar</button>
+                    <button type="button" class="btn btn-outline-danger w-100 mt-2" id="btnCancelar" onclick="abrirCancelar()" style="display:none;">Cancelar comanda</button>
                     <div class="alert alert-success mt-2 mb-0" id="alertCerrada" style="display:none;">
                         Comanda cobrada. <button type="button" class="btn btn-sm btn-outline-success" onclick="nuevaComanda()">Nueva comanda</button>
+                    </div>
+                    <div class="alert alert-danger mt-2 mb-0" id="alertCancelada" style="display:none;">
+                        Comanda cancelada. <button type="button" class="btn btn-sm btn-outline-danger" onclick="nuevaComanda()">Nueva comanda</button>
                     </div>
                 </div>
             </div>
@@ -105,7 +109,7 @@
                 </div>
                 <div class="table-responsive mb-2">
                     <table class="table table-sm">
-                        <thead><tr><th>Pago</th><th>Importe</th><th>Referencia</th></tr></thead>
+                        <thead><tr><th>Pago</th><th>Importe</th><th>Referencia</th><th>Estado</th><th></th></tr></thead>
                         <tbody id="pagosAplicados"></tbody>
                     </table>
                 </div>
@@ -133,6 +137,25 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
                 <button type="button" class="btn btn-primary" onclick="registrarPago()">Registrar pago</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="modalMotivo" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="tituloMotivo">Motivo</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <label class="form-label" id="lblMotivo">Motivo (mínimo 5 caracteres)</label>
+                <textarea class="form-control" id="motivoTexto" rows="3" maxlength="500"></textarea>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+                <button type="button" class="btn btn-danger" id="btnConfirmarMotivo" onclick="confirmarMotivo()">Confirmar</button>
             </div>
         </div>
     </div>
@@ -199,7 +222,7 @@
     function nuevaComanda() {
         postJson('/Ventas/NuevaComanda', {}).then(function (d) {
             if (d && d.ok) {
-                estado = { idComanda: d.idComanda, folio: d.folio, estado: 'ABIERTA', nombreMesa: null, subtotal: 0, impuestos: 0, total: 0, saldo: 0, comandaCerrada: false, partidas: [], pagos: [] };
+                estado = { idComanda: d.idComanda, folio: d.folio, estado: 'ABIERTA', nombreMesa: null, subtotal: 0, impuestos: 0, total: 0, saldo: 0, comandaCerrada: false, esAdministrador: false, puedeCancelar: true, partidas: [], pagos: [] };
                 render();
             } else if (d) {
                 mostrarToast(d.mensaje || 'Error al crear comanda.', 'error');
@@ -280,17 +303,30 @@
 
         var badge = document.getElementById('badgeEstado');
         var btnCobrar = document.getElementById('btnCobrar');
+        var btnCancelar = document.getElementById('btnCancelar');
         var alertCerrada = document.getElementById('alertCerrada');
-        if (estado.comandaCerrada) {
+        var alertCancelada = document.getElementById('alertCancelada');
+        if (estado.estado === 'CANCELADA') {
+            badge.className = 'badge bg-danger';
+            badge.textContent = 'CANCELADA';
+            btnCobrar.style.display = 'none';
+            btnCancelar.style.display = 'none';
+            alertCerrada.style.display = 'none';
+            alertCancelada.style.display = '';
+        } else if (estado.comandaCerrada) {
             badge.className = 'badge bg-secondary';
             badge.textContent = 'CERRADA';
             btnCobrar.style.display = 'none';
+            btnCancelar.style.display = 'none';
             alertCerrada.style.display = '';
+            alertCancelada.style.display = 'none';
         } else {
             badge.className = 'badge bg-success';
             badge.textContent = 'ABIERTA';
             btnCobrar.style.display = '';
+            btnCancelar.style.display = (estado.esAdministrador && estado.puedeCancelar) ? '' : 'none';
             alertCerrada.style.display = 'none';
+            alertCancelada.style.display = 'none';
         }
 
         var tbody = document.getElementById('partidas');
@@ -344,11 +380,17 @@
         tbody.innerHTML = '';
         estado.pagos.forEach(function (p) {
             var tr = document.createElement('tr');
-            tr.innerHTML = '<td>' + escapeHtml(p.metodoPago) + '</td><td class="text-end">' + fmt(p.importe) + '</td><td>' + escapeHtml(p.referencia || '') + '</td>';
+            var estadoCelda = p.devuelto
+                ? '<span class="badge bg-danger">DEVUELTO</span>'
+                : '<span class="badge bg-success">VIGENTE</span>';
+            var accion = (!p.devuelto && estado.esAdministrador && estado.estado !== 'CANCELADA')
+                ? '<button type="button" class="btn btn-sm btn-outline-danger" onclick="abrirDevolver(' + p.idPago + ')">Devolver</button>'
+                : '';
+            tr.innerHTML = '<td>' + escapeHtml(p.metodoPago) + '</td><td class="text-end">' + fmt(p.importe) + '</td><td>' + escapeHtml(p.referencia || '') + '</td><td>' + estadoCelda + '</td><td>' + accion + '</td>';
             tbody.appendChild(tr);
         });
         if (estado.pagos.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">Sin pagos.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">Sin pagos.</td></tr>';
         }
     }
 
@@ -376,6 +418,56 @@
                 mostrarToast(d.mensaje || 'Error al registrar el pago.', 'error');
             }
         });
+    }
+
+    var modalMotivo = null;
+    var idPagoDevolver = null;
+
+    function abrirCancelar() {
+        if (!estado || estado.estado !== 'ABIERTA') return;
+        document.getElementById('tituloMotivo').textContent = 'Cancelar comanda ' + estado.folio;
+        document.getElementById('lblMotivo').textContent = 'Motivo de cancelación (mínimo 5 caracteres)';
+        document.getElementById('motivoTexto').value = '';
+        idPagoDevolver = null;
+        modalMotivo = new bootstrap.Modal(document.getElementById('modalMotivo'));
+        modalMotivo.show();
+    }
+
+    function abrirDevolver(idPago) {
+        document.getElementById('tituloMotivo').textContent = 'Devolver pago';
+        document.getElementById('lblMotivo').textContent = 'Motivo de devolución (mínimo 5 caracteres)';
+        document.getElementById('motivoTexto').value = '';
+        idPagoDevolver = idPago;
+        modalMotivo = new bootstrap.Modal(document.getElementById('modalMotivo'));
+        modalMotivo.show();
+    }
+
+    function confirmarMotivo() {
+        var motivo = document.getElementById('motivoTexto').value.trim();
+        if (motivo.length < 5) { mostrarToast('El motivo debe tener al menos 5 caracteres.', 'error'); return; }
+        if (idPagoDevolver !== null) {
+            postJson('/Ventas/DevolverPago', { idPago: idPagoDevolver, motivo: motivo }).then(function (d) {
+                if (d && d.ok) {
+                    estado = d.estado;
+                    bootstrap.Modal.getInstance(document.getElementById('modalMotivo')).hide();
+                    mostrarToast(d.mensaje || 'Pago devuelto.', 'success');
+                    render();
+                } else if (d) {
+                    mostrarToast(d.mensaje || 'Error al devolver el pago.', 'error');
+                }
+            });
+        } else {
+            postJson('/Ventas/CancelarComanda', { idComanda: estado.idComanda, motivo: motivo }).then(function (d) {
+                if (d && d.ok) {
+                    estado = d.estado;
+                    bootstrap.Modal.getInstance(document.getElementById('modalMotivo')).hide();
+                    mostrarToast(d.mensaje || 'Comanda cancelada.', 'success');
+                    render();
+                } else if (d) {
+                    mostrarToast(d.mensaje || 'Error al cancelar la comanda.', 'error');
+                }
+            });
+        }
     }
 
     document.addEventListener('DOMContentLoaded', function () {

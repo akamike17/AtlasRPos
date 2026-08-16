@@ -556,7 +556,8 @@ public class CajaOperacionController : Controller
             .Where(p =>
                 p.IdSesionCaja == idSesion &&
                 p.IdCaja == idCaja &&
-                p.MetodoPago == MetodoPagoEfectivo)
+                p.MetodoPago == MetodoPagoEfectivo &&
+                !p.Devuelto)
             .SumAsync(p => (decimal?)p.Importe) ?? 0m;
 
         return (entradas, retiros, ventasEfectivo);

@@ -372,6 +372,53 @@ Cleanup:
 Incidencia registrada (NO bloqueante, NO corregida en esta fase):
 - El password configurado actualmente en User Secrets para `InitialSetup:AdminPassword` no coincide con el `PasswordHash` actual del usuario `admin` (verificado con `PasswordHasher`). No se incluyen ni password ni hash en este registro. Pendiente de decisión futura; no se regeneró nada durante esta fase.
 
+### Fase 9 — Cancelaciones y Devoluciones
+
+Estado:
+`COMPLETADA Y VERIFICADA`
+
+Implementado físicamente:
+
+- Cancelación de comandas ABIERTAS (`Ventas/CancelarComanda`): solo rol Administrador; motivo obligatorio (mínimo 5 caracteres); valida sesión de caja activa, ownership (caja/sesión/usuario/sucursal) y que la comanda esté ABIERTA; rechaza comandas con pagos sin devolver; registra `FechaCancelacion`, `MotivoCancelacion`, `IdUsuarioCancelacion`; auditoría `CANCELAR_COMANDA`; libera la Mesa atómicamente con `SELECT ... FOR UPDATE` y auditoría `LIBERAR_MESA_POR_CANCELACION`.
+- Devolución de pagos (`Ventas/DevolverPago`): solo rol Administrador; motivo obligatorio (mínimo 5 caracteres); bloqueo `SELECT ... FOR UPDATE` sobre el pago; valida ownership (caja/sesión) y sucursal de la comanda; idempotente (pago ya devuelto rechazado); marca `Devuelto`/`FechaDevolucion`/`IdUsuarioDevolucion`/`MotivoDevolucion`; auditoría `DEVOLVER_PAGO`.
+- Devolución EFECTIVO con impacto correcto en Caja: registra `MovimientoCaja` tipo `DEVOLUCION` (auditoría `DEVOLUCION_CAJA`) y queda EXCLUIDA del efectivo esperado del arqueo (el pago devuelto no cuenta como venta en efectivo).
+- Devolución no EFECTIVO sin salida ficticia del cajón: TARJETA devuelta NO genera movimiento de caja (no hay efectivo que devolver).
+- Arqueo correcto: `CajaOperacionController.CalcularTotalesAsync` excluye pagos devueltos de `VentasEfectivo`; esperado = FondoInicial + Entradas + VentasEfectivo(sin devueltos) − Retiros; verificado con cierre de caja tras devoluciones.
+- Idempotencia: doble cancelación y doble devolución rechazadas con mensaje controlado.
+- Concurrencia: cancelación concurrente → exactamente 1 éxito; devolución concurrente → exactamente 1 éxito; cancelación vs apertura de misma mesa → estado coherente (bloqueo `FOR UPDATE`).
+- Ownership: cancelar comanda ajena o devolver pago ajeno rechazado (403).
+- Autorización: endpoints exclusivos del rol Administrador; navegación sin sesión → 302; Fetch sin sesión → 401; Fetch sin permiso → 403.
+- UI `Views/Ventas/Index.cshtml`: botón "Cancelar comanda" (solo Administrador y comanda ABIERTA), tabla de pagos con estado VIGENTE/DEVUELTO y acción "Devolver", modal de motivo reutilizable, alertas de estado CERRADA/CANCELADA.
+- Auditoría completa con `IAuditoriaService`; snapshots sin secretos.
+- Antiforgery en todo POST mutable; ViewModels top-level (`CancelarComandaViewModel`, `DevolverPagoViewModel`) con protección de cuerpos `[FromBody]` nulos.
+
+Migraciones:
+
+- `20260816054239_AgregarDevoluciones` aplicada (registrada en `__EFMigrationsHistory`): columnas `Devuelto`, `FechaDevolucion`, `IdUsuarioDevolucion`, `MotivoDevolucion` en `Pagos`; `FechaCancelacion`, `IdUsuarioCancelacion`, `MotivoCancelacion` en `Comandas`; FK Restrict hacia `Usuarios`; índice compuesto `IX_Pagos_IdComanda_Devuelto` (reemplaza el simple respetando el respaldo de FK en MySQL); índices de FK nuevos. Sin operaciones destructivas.
+
+Build final:
+
+- `0 warnings / 0 errors`.
+
+Batería HTTP A–K + concurrencia + verificación física:
+
+- `60 PASS / 0 FAIL` (autorización, cancelación, motivos, ownership, comanda cerrada rechazada, mesa liberada, devolución EFECTIVO, devolución TARJETA, doble devolución, devolución concurrente, cancelación concurrente, regresión Ventas/Mesas/Salón, arqueo y cierre con devoluciones, verificación física DB).
+
+Evidencia persistente:
+
+- `C:\Users\Admin\AppData\Local\Temp\opencode\fase9\resultados.txt`
+
+Cleanup:
+
+- servidor detenido;
+- puerto 5250 libre;
+- sesiones de caja de prueba cerradas (0 abiertas después de F9);
+- sin código temporal en el repo.
+
+Deuda técnica NO bloqueante (no es fallo de Fase 9):
+- Recuperación administrativa de comandas huérfanas asociadas a sesiones de caja cerradas: una ejecución concurrente interrumpida durante las pruebas dejó una Comanda ABIERTA asociada a una SesionCaja posteriormente CERRADA; sin flujo funcional normal para resolverla por ownership; durante la batería F9 se realizó una limpieza puntual controlada (fuera del repo) marcando la comanda de prueba como CANCELADA y liberando su Mesa. No diseñar ni implementar la solución todavía.
+- Se mantiene separada la incidencia NO bloqueante del password del admin registrada en Fase 8 (no se toca).
+
 ## Módulos todavía sin administración completa
 
 Modelos presentes sin CRUD/UI administrativo completo:
@@ -382,16 +429,12 @@ Modelos presentes sin CRUD/UI administrativo completo:
 
 ## Próximo objetivo funcional
 
-Después de la administración comercial (Fase 7) y Mesas/Salón (Fase 8):
+Con Fase 9 (Cancelaciones y Devoluciones) cerrada:
 
-- cocina / KDS
-- inventario / recetas
-- cancelaciones/devoluciones
-- periféricos reales
-- integraciones/APIs
-- reportes
-- permisos/configuración avanzada
-- pruebas end-to-end finales
+- Fase 10: pendiente de definir por el usuario/ChatGPT. NO está implementada.
+  Candidatos históricos (no comprometidos): cocina/KDS, inventario/recetas,
+  periféricos reales, integraciones/APIs, reportes, permisos/configuración avanzada,
+  pruebas end-to-end finales.
 
 ## Estado técnico actual verificable
 

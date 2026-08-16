@@ -63,6 +63,18 @@ public class RegistrarPagoViewModel
     public string? Referencia { get; set; }
 }
 
+public class CancelarComandaViewModel
+{
+    public long IdComanda { get; set; }
+    public string? Motivo { get; set; }
+}
+
+public class DevolverPagoViewModel
+{
+    public long IdPago { get; set; }
+    public string? Motivo { get; set; }
+}
+
 public class ComandaEstadoViewModel
 {
     public long IdComanda { get; set; }
@@ -74,6 +86,8 @@ public class ComandaEstadoViewModel
     public decimal Total { get; set; }
     public decimal Saldo { get; set; }
     public bool ComandaCerrada { get; set; }
+    public bool EsAdministrador { get; set; }
+    public bool PuedeCancelar { get; set; }
     public List<ComandaItemViewModel> Partidas { get; set; } = new();
     public List<PagoItemViewModel> Pagos { get; set; } = new();
 }
@@ -96,4 +110,7 @@ public class PagoItemViewModel
     public decimal Importe { get; set; }
     public DateTime FechaPago { get; set; }
     public string? Referencia { get; set; }
+    public bool Devuelto { get; set; }
+    public DateTime? FechaDevolucion { get; set; }
+    public string? MotivoDevolucion { get; set; }
 }
