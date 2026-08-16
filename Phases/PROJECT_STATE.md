@@ -270,14 +270,69 @@ Cleanup verificado:
 - PID 2920 finalizado;
 - puerto 5250 libre.
 
+### Fase 7 — Catálogo comercial
+
+Estado:
+COMPLETADA Y VERIFICADA
+
+Módulos administrativos implementados:
+
+- Categorías de productos (búsqueda, crear, editar, activar/inactivar; inactivación bloqueada si tiene productos activos; duplicado por índice único `Nombre`).
+- Productos (búsqueda, crear, editar, activar/inactivar; categoría obligatoria y activa; precio >= 0 con redondeo 2 decimales; duplicados validados a nivel de aplicación por `(IdCategoriaProducto, Nombre)`).
+- Impuestos (búsqueda, crear, editar, activar/inactivar; por empresa del administrador; tasa 0–100; duplicado por índice único `(IdEmpresa, Nombre)`).
+- Asociación Producto–Impuesto (asignar/quitar desde administración de Producto; impuestos activos de la empresa; clave compuesta `(IdProducto, IdImpuesto)`; borrado físico de la fila de asociación).
+- Métodos de Pago (búsqueda, crear, editar, activar/inactivar; por empresa del administrador; código único `(IdEmpresa, Codigo)`; `RequiereReferencia`/`PermiteCambio`).
+
+Navegación administrativa:
+
+- Menú desplegable Administración en `_Layout.cshtml` (solo rol Administrador) con enlaces a Categorías, Productos, Impuestos y Métodos de Pago.
+
+Autorización:
+
+- Todos los controladores nuevos protegidos con `[Authorize(Roles = "Administrador")]`.
+- Fetch sin sesión → 401; Fetch sin permiso → 403; navegación sin permiso → Denegado.
+
+Antiforgery:
+
+- Toda operación POST mutable valida `[ValidateAntiForgeryToken]`; el token se envía desde la vista mediante `RequestVerificationToken`.
+
+Auditoría:
+
+- `IAuditoriaService` con acciones `CREAR_/ACTUALIZAR_/ACTIVAR_/INACTIVAR_CATEGORIA/PRODUCTO/IMPUESTO/METODO_PAGO` y `ASIGNAR_IMPUESTO`/`QUITAR_IMPUESTO`; snapshots sin secretos.
+
+Regresión de Ventas POS:
+
+- Ventas sigue operando con catálogo configurado desde los nuevos módulos: categorías activas con productos activos, impuestos (incluido/no incluido), métodos de pago activos, comanda, pago y cierre correctos.
+
+Build:
+
+- `0 warnings / 0 errors`.
+
+Batería HTTP:
+
+- `73 PASS / 0 FAIL` (A autorización, B categorías, C productos, D impuestos, E producto-impuesto, F métodos de pago, G regresión Ventas, H seguridad).
+
+Migraciones:
+
+- Ninguna requerida; schema existente suficiente (sin cambios de schema).
+
+Cleanup:
+
+- servidor detenido;
+- PID 1616 finalizado;
+- puerto 5250 libre;
+- sin código temporal en el repo;
+- evidencia persistente en `C:\Users\Admin\AppData\Local\Temp\opencode\fase7\resultados.txt`.
+
+Deuda técnica NO bloqueante (no son fallos de Fase 7):
+
+1. Patrón heredado de edición: algunas vistas administrativas usan `Buscar?termino=<id>` para recuperar un registro antes de editar. Debe evaluarse posteriormente reemplazarlo por un endpoint `Obtener(id)` explícito.
+2. `Productos/gestionarImpuestos` crea nuevas instancias `bootstrap.Modal` repetidamente. Evaluar reutilización de instancia.
+
 ## Módulos todavía sin administración completa
 
 Modelos presentes sin CRUD/UI administrativo completo:
 
-- CategoriaProducto
-- Producto
-- Impuesto
-- MetodoPago
 - Mesa
 - ConfiguracionPos
 - Dispositivo
@@ -285,17 +340,7 @@ Modelos presentes sin CRUD/UI administrativo completo:
 
 ## Próximo objetivo funcional
 
-Antes de ampliar operación avanzada, completar la administración comercial necesaria para operar Ventas sin depender de seeds temporales:
-
-### Fase 7 propuesta
-
-- Categorías de productos
-- Productos
-- Impuestos
-- asociación Producto-Impuesto
-- Métodos de pago
-
-Después:
+Después de la administración comercial (Fase 7):
 
 - Mesas / salón
 - cocina / KDS

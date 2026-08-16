@@ -1,0 +1,217 @@
+@{
+    ViewData["Title"] = "Categorías";
+}
+
+@Html.AntiForgeryToken()
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="h4 mb-0">Categorías de productos</h1>
+    <button type="button" class="btn btn-primary" onclick="window.abrirModal()">Nuevo</button>
+</div>
+
+<div class="mb-3">
+    <input type="text" id="buscar" class="form-control" placeholder="Buscar por nombre o descripción..." />
+</div>
+
+<div class="table-responsive">
+    <table class="table table-striped align-middle">
+        <thead>
+            <tr>
+                <th>Id</th>
+                <th>Nombre</th>
+                <th>Descripción</th>
+                <th>Productos</th>
+                <th>Estatus</th>
+                <th class="text-end">Acciones</th>
+            </tr>
+        </thead>
+        <tbody id="tabla-categorias"></tbody>
+    </table>
+</div>
+
+<div class="modal fade" id="modalCategoria" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="formCategoria" novalidate>
+                <div class="modal-header">
+                    <h5 class="modal-title" id="tituloModal">Nueva categoría</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="IdCategoriaProducto" />
+                    <div class="mb-3">
+                        <label class="form-label" for="Nombre">Nombre *</label>
+                        <input type="text" id="Nombre" class="form-control" maxlength="150" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="Descripcion">Descripción</label>
+                        <textarea id="Descripcion" class="form-control" maxlength="500" rows="3"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@await Html.PartialAsync("_Toast")
+
+@section Scripts {
+<script>
+(function () {
+    const token = document.querySelector('input[name="__RequestVerificationToken"]').value;
+    const modal = document.getElementById('modalCategoria');
+    let debounceTimer = null;
+
+    const headers = {
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': 'application/json'
+    };
+
+    async function respuestaJson(res) {
+        if (res.status === 401) { window.location.href = '/Acceso/Login'; return null; }
+        if (res.status === 403) { mostrarToast('Acceso denegado.', 'error'); return null; }
+        if (!res.ok) { mostrarToast('Error en la solicitud.', 'error'); return null; }
+        return res.json();
+    }
+
+    async function cargar(termino) {
+        const url = '/Categorias/Buscar?termino=' + encodeURIComponent(termino);
+        try {
+            const res = await fetch(url, { headers });
+            const data = await respuestaJson(res);
+            if (data) renderizar(data);
+        } catch (e) {
+            mostrarToast('Error de conexión.', 'error');
+        }
+    }
+
+    function renderizar(lista) {
+        const tbody = document.getElementById('tabla-categorias');
+        tbody.innerHTML = '';
+        if (!lista.length) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center">Sin resultados</td></tr>';
+            return;
+        }
+        lista.forEach(c => {
+            const tr = document.createElement('tr');
+            const badge = c.activo
+                ? '<span class="badge bg-success">Activo</span>'
+                : '<span class="badge bg-secondary">Inactivo</span>';
+            const botonEstatus = c.activo
+                ? '<button type="button" class="btn btn-sm btn-outline-warning" onclick="window.cambiarEstatus(' + c.idCategoriaProducto + ', false)">Inactivar</button>'
+                : '<button type="button" class="btn btn-sm btn-outline-success" onclick="window.cambiarEstatus(' + c.idCategoriaProducto + ', true)">Activar</button>';
+            tr.innerHTML = '<td>' + c.idCategoriaProducto + '</td>' +
+                '<td>' + escapeHtml(c.nombre) + '</td>' +
+                '<td>' + escapeHtml(c.descripcion || '') + '</td>' +
+                '<td>' + c.cantidadProductos + '</td>' +
+                '<td>' + badge + '</td>' +
+                '<td class="text-end text-nowrap">' +
+                '<button type="button" class="btn btn-sm btn-outline-primary me-1" onclick="window.editar(' + c.idCategoriaProducto + ')">Editar</button>' +
+                botonEstatus +
+                '</td>';
+            tbody.appendChild(tr);
+        });
+    }
+
+    function abrirModal() {
+        document.getElementById('formCategoria').reset();
+        document.getElementById('IdCategoriaProducto').value = '';
+        document.getElementById('tituloModal').textContent = 'Nueva categoría';
+        new bootstrap.Modal(modal).show();
+    }
+
+    async function editar(id) {
+        const url = '/Categorias/Buscar?termino=' + encodeURIComponent(id);
+        try {
+            const res = await fetch(url, { headers });
+            const data = await respuestaJson(res);
+            if (!data) return;
+            const c = data.find(x => x.idCategoriaProducto === id);
+            if (!c) { mostrarToast('No se encontró el registro.', 'error'); return; }
+            document.getElementById('IdCategoriaProducto').value = c.idCategoriaProducto;
+            document.getElementById('Nombre').value = c.nombre;
+            document.getElementById('Descripcion').value = c.descripcion || '';
+            document.getElementById('tituloModal').textContent = 'Editar categoría';
+            new bootstrap.Modal(modal).show();
+        } catch (err) {
+            mostrarToast('Error de conexión.', 'error');
+        }
+    }
+
+    async function guardar() {
+        const id = document.getElementById('IdCategoriaProducto').value;
+        const payload = {
+            idCategoriaProducto: id ? parseInt(id, 10) : 0,
+            nombre: document.getElementById('Nombre').value,
+            descripcion: document.getElementById('Descripcion').value
+        };
+        const url = payload.idCategoriaProducto ? '/Categorias/Editar' : '/Categorias/Crear';
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: Object.assign({}, headers, {
+                    'Content-Type': 'application/json',
+                    'RequestVerificationToken': token
+                }),
+                body: JSON.stringify(payload)
+            });
+            const r = await respuestaJson(res);
+            if (!r) return;
+            if (r.ok) {
+                mostrarToast(r.mensaje, 'ok');
+                bootstrap.Modal.getInstance(modal).hide();
+                cargar(document.getElementById('buscar').value.trim());
+            } else {
+                mostrarToast(r.mensaje, 'error');
+            }
+        } catch (err) {
+            mostrarToast('Error de conexión.', 'error');
+        }
+    }
+
+    async function cambiarEstatus(id, activar) {
+        const accion = activar ? '¿Activar la categoría?' : '¿Inactivar la categoría?';
+        if (!confirm(accion)) return;
+        const url = activar ? '/Categorias/Activar?id=' + id : '/Categorias/Inactivar?id=' + id;
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: Object.assign({}, headers, { 'RequestVerificationToken': token })
+            });
+            const r = await respuestaJson(res);
+            if (!r) return;
+            if (r.ok) {
+                mostrarToast(r.mensaje, 'ok');
+                cargar(document.getElementById('buscar').value.trim());
+            } else {
+                mostrarToast(r.mensaje, 'error');
+            }
+        } catch (err) {
+            mostrarToast('Error de conexión.', 'error');
+        }
+    }
+
+    window.cambiarEstatus = cambiarEstatus;
+    window.editar = editar;
+    window.abrirModal = abrirModal;
+
+    document.getElementById('formCategoria').addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        guardar();
+    });
+
+    document.getElementById('buscar').addEventListener('input', function () {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(function () {
+            cargar(this.value.trim());
+        }.bind(this), 300);
+    });
+
+    cargar('');
+})();
+</script>
+}
