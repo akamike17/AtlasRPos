@@ -1,0 +1,209 @@
+﻿@model AtlasRestaurantPOS.Web.Models.ViewModels.PanelCajaViewModel
+@{
+    ViewData["Title"] = "Panel de Caja";
+}
+
+<h1 class="mb-3">Panel de Caja</h1>
+
+<div class="row mb-3">
+    <div class="col">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">@Model.Codigo - @Model.Nombre</h5>
+                <dl class="row mb-0">
+                    <dt class="col-sm-3">Sucursal</dt>
+                    <dd class="col-sm-9">@Model.Sucursal</dd>
+                    <dt class="col-sm-3">Usuario</dt>
+                    <dd class="col-sm-9">@Model.UsuarioApertura</dd>
+                    <dt class="col-sm-3">Apertura</dt>
+                    <dd class="col-sm-9">@Model.FechaApertura.ToString("g")</dd>
+                    <dt class="col-sm-3">Estado</dt>
+                    <dd class="col-sm-9"><span class="badge bg-success">ABIERTA</span></dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-3">
+    <div class="col-md-3 mb-2">
+        <div class="card"><div class="card-body">
+            <h6 class="card-subtitle text-muted">Fondo inicial</h6>
+            <p class="fs-4 mb-0">@Model.FondoInicial.ToString("C")</p>
+        </div></div>
+    </div>
+    <div class="col-md-3 mb-2">
+        <div class="card"><div class="card-body">
+            <h6 class="card-subtitle text-muted">Entradas</h6>
+            <p class="fs-4 mb-0 text-success">@Model.Entradas.ToString("C")</p>
+        </div></div>
+    </div>
+    <div class="col-md-3 mb-2">
+        <div class="card"><div class="card-body">
+            <h6 class="card-subtitle text-muted">Retiros / Salidas</h6>
+            <p class="fs-4 mb-0 text-danger">@Model.Retiros.ToString("C")</p>
+        </div></div>
+    </div>
+    <div class="col-md-3 mb-2">
+        <div class="card"><div class="card-body">
+            <h6 class="card-subtitle text-muted">Ventas efectivo</h6>
+            <p class="fs-4 mb-0">@Model.VentasEfectivo.ToString("C")</p>
+        </div></div>
+    </div>
+</div>
+
+<div class="row mb-3">
+    <div class="col">
+        <div class="card border-primary">
+            <div class="card-body">
+                <h6 class="card-subtitle text-muted">Efectivo esperado</h6>
+                <p class="fs-3 mb-0">@Model.EfectivoEsperado.ToString("C")</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-3">
+    <div class="col-md-6 mb-2">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">Entrada de efectivo</h5>
+                <form id="formEntrada">
+                    @Html.AntiForgeryToken()
+                    <div class="mb-2">
+                        <label class="form-label">Importe</label>
+                        <input type="number" step="0.01" min="0.01" class="form-control" name="Importe" required />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Concepto</label>
+                        <input type="text" class="form-control" name="Concepto" maxlength="500" required />
+                    </div>
+                    <button type="button" class="btn btn-success" onclick="registrarMovimiento('/CajaOperacion/Entrada', 'formEntrada')">Registrar entrada</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6 mb-2">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">Retiro / Salida de efectivo</h5>
+                <form id="formRetiro">
+                    @Html.AntiForgeryToken()
+                    <div class="mb-2">
+                        <label class="form-label">Importe</label>
+                        <input type="number" step="0.01" min="0.01" class="form-control" name="Importe" required />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Concepto</label>
+                        <input type="text" class="form-control" name="Concepto" maxlength="500" required />
+                    </div>
+                    <button type="button" class="btn btn-danger" onclick="registrarMovimiento('/CajaOperacion/Retiro', 'formRetiro')">Registrar retiro</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-3">
+    <div class="col">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Movimientos de la sesión</h5>
+                <div class="table-responsive">
+                    <table class="table table-striped table-sm">
+                        <thead>
+                            <tr>
+                                <th>Fecha</th>
+                                <th>Tipo</th>
+                                <th>Concepto</th>
+                                <th class="text-end">Importe</th>
+                                <th>Usuario</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var m in Model.Movimientos)
+                            {
+                                <tr>
+                                    <td>@m.Fecha.ToString("g")</td>
+                                    <td>@m.Tipo</td>
+                                    <td>@m.Concepto</td>
+                                    <td class="text-end">@m.Importe.ToString("C")</td>
+                                    <td>@m.Usuario</td>
+                                </tr>
+                            }
+                            @if (Model.Movimientos.Count == 0)
+                            {
+                                <tr><td colspan="5" class="text-center text-muted">Sin movimientos.</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col">
+        <div class="card border-danger">
+            <div class="card-body">
+                <h5 class="card-title">Cierre de caja</h5>
+                <form asp-action="Cerrar" method="post" onsubmit="return confirm('¿Seguro que deseas cerrar la caja?');">
+                    @Html.AntiForgeryToken()
+                    <div class="mb-2">
+                        <label class="form-label">Monto contado (efectivo físico)</label>
+                        <input type="number" step="0.01" min="0" class="form-control" name="MontoCierre" required />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Observaciones (opcional)</label>
+                        <input type="text" class="form-control" name="Observaciones" maxlength="500" />
+                    </div>
+                    <button type="submit" class="btn btn-danger">Cerrar caja</button>
+                </form>
+                <p class="text-muted mt-2 mb-0">La diferencia se calculará automáticamente al cerrar: Monto contado - Efectivo esperado.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+@await Html.PartialAsync("_Toast")
+
+<script>
+    function registrarMovimiento(url, formId) {
+        var form = document.getElementById(formId);
+        var importe = parseFloat(form.querySelector('input[name="Importe"]').value);
+        var concepto = form.querySelector('input[name="Concepto"]').value;
+        var csrf = document.querySelector('input[name="__RequestVerificationToken"]').value;
+
+        if (isNaN(importe) || importe <= 0) {
+            mostrarToast('El importe debe ser mayor a cero.', 'error');
+            return;
+        }
+        if (!concepto || concepto.trim() === '') {
+            mostrarToast('El concepto es obligatorio.', 'error');
+            return;
+        }
+
+        fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                'RequestVerificationToken': csrf
+            },
+            body: JSON.stringify({ importe: importe, concepto: concepto })
+        })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data.ok) {
+                    window.location.reload();
+                } else {
+                    mostrarToast(data.mensaje || 'Error al registrar el movimiento.', 'error');
+                }
+            })
+            .catch(function () {
+                mostrarToast('Error de conexión.', 'error');
+            });
+    }
+</script>

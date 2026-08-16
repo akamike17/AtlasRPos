@@ -1,0 +1,21 @@
+<div class="toast-container position-fixed top-0 end-0 p-3" id="contenedorToast" style="z-index: 1080;"></div>
+<script>
+    function mostrarToast(mensaje, tipo) {
+        const contenedor = document.getElementById('contenedorToast');
+        const bg = tipo === 'error' ? 'text-bg-danger' : 'text-bg-success';
+        const div = document.createElement('div');
+        div.className = 'toast align-items-center border-0 ' + bg;
+        div.setAttribute('role', 'alert');
+        div.innerHTML = '<div class="d-flex"><div class="toast-body"></div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>';
+        div.querySelector('.toast-body').textContent = mensaje;
+        contenedor.appendChild(div);
+        const toast = new bootstrap.Toast(div, { delay: 3000 });
+        toast.show();
+        div.addEventListener('hidden.bs.toast', () => div.remove());
+    }
+    function escapeHtml(valor) {
+        const d = document.createElement('div');
+        d.textContent = valor == null ? '' : String(valor);
+        return d.innerHTML;
+    }
+</script>

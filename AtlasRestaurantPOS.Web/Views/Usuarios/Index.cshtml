@@ -1,0 +1,283 @@
+@{
+    ViewData["Title"] = "Usuarios";
+}
+
+@Html.AntiForgeryToken()
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="h4 mb-0">Usuarios</h1>
+    <button type="button" class="btn btn-primary" onclick="window.abrirModal()">Nuevo</button>
+</div>
+
+<div class="mb-3">
+    <input type="text" id="buscar" class="form-control" placeholder="Buscar por nombre, usuario, empresa, rol o correo..." />
+</div>
+
+<div class="table-responsive">
+    <table class="table table-striped align-middle">
+        <thead>
+            <tr>
+                <th>Id</th>
+                <th>Nombre</th>
+                <th>Usuario</th>
+                <th>Empresa</th>
+                <th>Rol</th>
+                <th>Correo</th>
+                <th>Estatus</th>
+                <th>Fecha</th>
+                <th class="text-end">Acciones</th>
+            </tr>
+        </thead>
+        <tbody id="tabla-usuarios"></tbody>
+    </table>
+</div>
+
+<div class="modal fade" id="modalUsuario" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="formUsuario" novalidate>
+                <div class="modal-header">
+                    <h5 class="modal-title" id="tituloModal">Nuevo usuario</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="IdUsuario" />
+                    <div class="mb-3">
+                        <label class="form-label" for="Nombre">Nombre *</label>
+                        <input type="text" id="Nombre" class="form-control" maxlength="150" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="UsuarioLogin">Usuario *</label>
+                        <input type="text" id="UsuarioLogin" class="form-control" maxlength="100" autocomplete="off" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="IdEmpresa">Empresa *</label>
+                        <select id="IdEmpresa" class="form-select"></select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="IdRol">Rol *</label>
+                        <select id="IdRol" class="form-select"></select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="Correo">Correo</label>
+                        <input type="email" id="Correo" class="form-control" maxlength="200" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="Password">Contraseña <span id="ayudaPassword"></span></label>
+                        <input type="password" id="Password" class="form-control" autocomplete="new-password" />
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@await Html.PartialAsync("_Toast")
+
+@section Scripts {
+<script>
+(function () {
+    const token = document.querySelector('input[name="__RequestVerificationToken"]').value;
+    const modal = document.getElementById('modalUsuario');
+    const selectEmpresa = document.getElementById('IdEmpresa');
+    const selectRol = document.getElementById('IdRol');
+    let debounceTimer = null;
+
+    const headers = {
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': 'application/json'
+    };
+
+    async function respuestaJson(res) {
+        if (res.status === 401) { window.location.href = '/Acceso/Login'; return null; }
+        if (res.status === 403) { mostrarToast('Acceso denegado.', 'error'); return null; }
+        if (!res.ok) { mostrarToast('Error en la solicitud.', 'error'); return null; }
+        return res.json();
+    }
+
+    async function cargar(termino) {
+        const url = '/Usuarios/Buscar?termino=' + encodeURIComponent(termino);
+        try {
+            const res = await fetch(url, { headers });
+            const data = await respuestaJson(res);
+            if (data) renderizar(data);
+        } catch (e) {
+            mostrarToast('Error de conexión.', 'error');
+        }
+    }
+
+    function renderizar(lista) {
+        const tbody = document.getElementById('tabla-usuarios');
+        tbody.innerHTML = '';
+        if (!lista.length) {
+            tbody.innerHTML = '<tr><td colspan="9" class="text-center">Sin resultados</td></tr>';
+            return;
+        }
+        lista.forEach(u => {
+            const tr = document.createElement('tr');
+            const badge = u.activo
+                ? '<span class="badge bg-success">Activo</span>'
+                : '<span class="badge bg-secondary">Inactivo</span>';
+            const botonEstatus = u.activo
+                ? '<button type="button" class="btn btn-sm btn-outline-warning" onclick="window.cambiarEstatus(' + u.idUsuario + ', false)">Inactivar</button>'
+                : '<button type="button" class="btn btn-sm btn-outline-success" onclick="window.cambiarEstatus(' + u.idUsuario + ', true)">Activar</button>';
+            tr.innerHTML = '<td>' + u.idUsuario + '</td>' +
+                '<td>' + escapeHtml(u.nombre) + '</td>' +
+                '<td>' + escapeHtml(u.usuarioLogin) + '</td>' +
+                '<td>' + escapeHtml(u.empresa) + '</td>' +
+                '<td>' + escapeHtml(u.rol) + '</td>' +
+                '<td>' + escapeHtml(u.correo || '') + '</td>' +
+                '<td>' + badge + '</td>' +
+                '<td>' + new Date(u.fechaCreacion).toLocaleDateString() + '</td>' +
+                '<td class="text-end text-nowrap">' +
+                '<button type="button" class="btn btn-sm btn-outline-primary me-1" onclick="window.editar(' + u.idUsuario + ')">Editar</button>' +
+                botonEstatus +
+                '</td>';
+            tbody.appendChild(tr);
+        });
+    }
+
+    async function cargarCatalogos() {
+        try {
+            const [resEmpresas, resRoles] = await Promise.all([
+                fetch('/Empresas/Buscar', { headers }),
+                fetch('/Roles/Buscar', { headers })
+            ]);
+            const empresas = await respuestaJson(resEmpresas);
+            const roles = await respuestaJson(resRoles);
+            if (!empresas || !roles) return;
+            selectEmpresa.innerHTML = '<option value="">Seleccione...</option>';
+            empresas.filter(e => e.activo).forEach(e => {
+                const op = document.createElement('option');
+                op.value = e.idEmpresa;
+                op.textContent = e.nombre;
+                selectEmpresa.appendChild(op);
+            });
+            selectRol.innerHTML = '<option value="">Seleccione...</option>';
+            roles.filter(r => r.activo).forEach(r => {
+                const op = document.createElement('option');
+                op.value = r.idRol;
+                op.textContent = r.nombre;
+                selectRol.appendChild(op);
+            });
+        } catch (err) {
+            mostrarToast('Error al cargar catálogos.', 'error');
+        }
+    }
+
+    function abrirModal() {
+        document.getElementById('formUsuario').reset();
+        document.getElementById('IdUsuario').value = '';
+        document.getElementById('Password').value = '';
+        document.getElementById('Password').removeAttribute('required');
+        document.getElementById('ayudaPassword').textContent = '*';
+        document.getElementById('tituloModal').textContent = 'Nuevo usuario';
+        new bootstrap.Modal(modal).show();
+    }
+
+    async function editar(id) {
+        const url = '/Usuarios/Buscar?termino=' + encodeURIComponent(id);
+        try {
+            const res = await fetch(url, { headers });
+            const data = await respuestaJson(res);
+            if (!data) return;
+            const u = data.find(x => x.idUsuario === id);
+            if (!u) { mostrarToast('No se encontró el registro.', 'error'); return; }
+            document.getElementById('IdUsuario').value = u.idUsuario;
+            document.getElementById('Nombre').value = u.nombre;
+            document.getElementById('UsuarioLogin').value = u.usuarioLogin;
+            document.getElementById('IdEmpresa').value = u.idEmpresa;
+            document.getElementById('IdRol').value = u.idRol;
+            document.getElementById('Correo').value = u.correo || '';
+            document.getElementById('Password').value = '';
+            document.getElementById('Password').removeAttribute('required');
+            document.getElementById('ayudaPassword').textContent = '(dejar vacío para no cambiar)';
+            document.getElementById('tituloModal').textContent = 'Editar usuario';
+            new bootstrap.Modal(modal).show();
+        } catch (err) {
+            mostrarToast('Error de conexión.', 'error');
+        }
+    }
+
+    async function guardar() {
+        const id = document.getElementById('IdUsuario').value;
+        const payload = {
+            idUsuario: id ? parseInt(id, 10) : 0,
+            nombre: document.getElementById('Nombre').value,
+            usuarioLogin: document.getElementById('UsuarioLogin').value,
+            idEmpresa: parseInt(document.getElementById('IdEmpresa').value, 10) || 0,
+            idRol: parseInt(document.getElementById('IdRol').value, 10) || 0,
+            correo: document.getElementById('Correo').value,
+            password: document.getElementById('Password').value
+        };
+        const url = payload.idUsuario ? '/Usuarios/Editar' : '/Usuarios/Crear';
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: Object.assign({}, headers, {
+                    'Content-Type': 'application/json',
+                    'RequestVerificationToken': token
+                }),
+                body: JSON.stringify(payload)
+            });
+            const r = await respuestaJson(res);
+            if (!r) return;
+            if (r.ok) {
+                mostrarToast(r.mensaje, 'ok');
+                bootstrap.Modal.getInstance(modal).hide();
+                cargar(document.getElementById('buscar').value.trim());
+            } else {
+                mostrarToast(r.mensaje, 'error');
+            }
+        } catch (err) {
+            mostrarToast('Error de conexión.', 'error');
+        }
+    }
+
+    async function cambiarEstatus(id, activar) {
+        const accion = activar ? '¿Activar el usuario?' : '¿Inactivar el usuario?';
+        if (!confirm(accion)) return;
+        const url = activar ? '/Usuarios/Activar?id=' + id : '/Usuarios/Inactivar?id=' + id;
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: Object.assign({}, headers, { 'RequestVerificationToken': token })
+            });
+            const r = await respuestaJson(res);
+            if (!r) return;
+            if (r.ok) {
+                mostrarToast(r.mensaje, 'ok');
+                cargar(document.getElementById('buscar').value.trim());
+            } else {
+                mostrarToast(r.mensaje, 'error');
+            }
+        } catch (err) {
+            mostrarToast('Error de conexión.', 'error');
+        }
+    }
+
+    window.cambiarEstatus = cambiarEstatus;
+    window.editar = editar;
+    window.abrirModal = abrirModal;
+
+    document.getElementById('formUsuario').addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        guardar();
+    });
+
+    document.getElementById('buscar').addEventListener('input', function () {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(function () {
+            cargar(this.value.trim());
+        }.bind(this), 300);
+    });
+
+    cargarCatalogos();
+    cargar('');
+})();
+</script>
+}

@@ -1,0 +1,876 @@
+using System.Data;
+using System.Security.Claims;
+using AtlasRestaurantPOS.Web.Constants;
+using AtlasRestaurantPOS.Web.Data;
+using AtlasRestaurantPOS.Web.Models;
+using AtlasRestaurantPOS.Web.Models.ViewModels;
+using AtlasRestaurantPOS.Web.Services.Auditoria;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace AtlasRestaurantPOS.Web.Controllers;
+
+[Authorize]
+public class VentasController : Controller
+{
+    private const string ClaimIdCaja = "IdCaja";
+    private const string ClaimIdSesionCaja = "IdSesionCaja";
+    private const string TipoDocumentoComanda = "COMANDA";
+    private const int LongitudFolioPredeterminada = 6;
+
+    private readonly AtlasRestaurantDbContext _db;
+    private readonly IAuditoriaService _auditoria;
+    private readonly ILogger<VentasController> _logger;
+
+    public VentasController(AtlasRestaurantDbContext db, IAuditoriaService auditoria, ILogger<VentasController> logger)
+    {
+        _db = db;
+        _auditoria = auditoria;
+        _logger = logger;
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> Index()
+    {
+        var (idUsuario, idCaja, idSesion) = ObtenerContexto();
+        if (idUsuario is null || idCaja is null || idSesion is null)
+        {
+            return RedirectToAction("Seleccionar", "CajaOperacion");
+        }
+
+        if (!await ValidarSesionCajaAsync(idUsuario.Value, idCaja.Value, idSesion.Value))
+        {
+            return RedirectToAction("Seleccionar", "CajaOperacion");
+        }
+
+        var idSucursal = ObtenerClaimInt("IdSucursal") ?? 0;
+        var idEmpresa = ObtenerClaimInt("IdEmpresa") ?? 0;
+
+        var caja = await _db.Cajas
+            .AsNoTracking()
+            .Where(c => c.IdCaja == idCaja && c.IdSucursal == idSucursal)
+            .Select(c => new { c.Codigo, c.Nombre, Sucursal = c.Sucursal.Nombre })
+            .FirstOrDefaultAsync();
+
+        if (caja is null)
+        {
+            return RedirectToAction("Seleccionar", "CajaOperacion");
+        }
+
+        var categorias = await _db.CategoriasProducto
+            .AsNoTracking()
+            .Where(cat => cat.Activo && cat.Productos.Any(p => p.Activo))
+            .OrderBy(cat => cat.Nombre)
+            .Select(cat => new CategoriaVentasViewModel
+            {
+                IdCategoriaProducto = cat.IdCategoriaProducto,
+                Nombre = cat.Nombre,
+                Productos = cat.Productos
+                    .Where(p => p.Activo)
+                    .OrderBy(p => p.Nombre)
+                    .Select(p => new ProductoVentasViewModel
+                    {
+                        IdProducto = p.IdProducto,
+                        Nombre = p.Nombre,
+                        Precio = p.Precio
+                    })
+                    .ToList()
+            })
+            .ToListAsync();
+
+        var metodos = await _db.MetodosPago
+            .AsNoTracking()
+            .Where(m => m.IdEmpresa == idEmpresa && m.Activo)
+            .OrderBy(m => m.Nombre)
+            .Select(m => new MetodoPagoViewModel
+            {
+                IdMetodoPago = m.IdMetodoPago,
+                Nombre = m.Nombre,
+                Codigo = m.Codigo,
+                RequiereReferencia = m.RequiereReferencia,
+                PermiteCambio = m.PermiteCambio
+            })
+            .ToListAsync();
+
+        var modelo = new VentasIndexViewModel
+        {
+            Codigo = caja.Codigo,
+            Nombre = caja.Nombre,
+            Sucursal = caja.Sucursal,
+            Categorias = categorias,
+            MetodosPago = metodos
+        };
+
+        return View(modelo);
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> NuevaComanda()
+    {
+        var (idUsuario, idCaja, idSesion) = ObtenerContexto();
+        if (idUsuario is null || idCaja is null || idSesion is null)
+        {
+            return JsonError("No tienes una sesión de caja activa.");
+        }
+
+        var idSucursal = ObtenerClaimInt("IdSucursal");
+        if (idSucursal is null)
+        {
+            return JsonError("No se pudo identificar tu sucursal.");
+        }
+
+        try
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted);
+            try
+            {
+                if (!await ValidarSesionCajaAsync(idUsuario.Value, idCaja.Value, idSesion.Value))
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("La sesión de caja no está disponible.");
+                }
+
+                var folio = await GenerarFolioAsync(idSucursal.Value);
+
+                var comanda = new Comanda
+                {
+                    IdSucursal = idSucursal.Value,
+                    IdCaja = idCaja.Value,
+                    IdSesionCaja = idSesion,
+                    IdUsuario = idUsuario.Value,
+                    FechaApertura = DateTime.Now,
+                    Estado = EstadosComanda.ABIERTA,
+                    Folio = folio,
+                    Subtotal = 0m,
+                    Impuestos = 0m,
+                    Descuento = 0m,
+                    Total = 0m
+                };
+                _db.Comandas.Add(comanda);
+                await _db.SaveChangesAsync();
+
+                await _auditoria.RegistrarAsync(
+                    "Comanda",
+                    comanda.IdComanda.ToString(),
+                    "CREAR_COMANDA",
+                    null,
+                    new
+                    {
+                        comanda.IdComanda,
+                        comanda.Folio,
+                        comanda.IdSucursal,
+                        comanda.IdCaja,
+                        comanda.IdSesionCaja,
+                        comanda.Estado
+                    });
+
+                await tx.CommitAsync();
+
+                return Json(new { ok = true, idComanda = comanda.IdComanda, folio = comanda.Folio, mensaje = "Comanda creada." });
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error al crear comanda.");
+            return JsonError("Ocurrió un error al crear la comanda.");
+        }
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> AgregarProducto([FromBody] AgregarProductoViewModel modelo)
+    {
+        var (idUsuario, idCaja, idSesion) = ObtenerContexto();
+        if (idUsuario is null || idCaja is null || idSesion is null)
+        {
+            return JsonError("No tienes una sesión de caja activa.");
+        }
+
+        if (modelo is null)
+        {
+            return JsonError("Datos inválidos.");
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return JsonError(ErrorModelState());
+        }
+
+        if (modelo.Cantidad <= 0)
+        {
+            return JsonError("La cantidad debe ser mayor a cero.");
+        }
+
+        try
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted);
+            try
+            {
+                var comanda = await ObtenerComandaOperativaAsync(modelo.IdComanda, idUsuario.Value, idCaja.Value, idSesion.Value);
+                if (comanda is null)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("La comanda no existe o no pertenece a tu sesión.");
+                }
+                if (comanda.Estado != EstadosComanda.ABIERTA)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("La comanda no está abierta.");
+                }
+
+                var producto = await _db.Productos
+                    .AsNoTracking()
+                    .Where(p => p.IdProducto == modelo.IdProducto && p.Activo && p.CategoriaProducto.Activo)
+                    .FirstOrDefaultAsync();
+
+                if (producto is null)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("El producto no existe o está inactivo.");
+                }
+
+                var detalle = new ComandaDetalle
+                {
+                    IdComanda = comanda.IdComanda,
+                    IdProducto = producto.IdProducto,
+                    Cantidad = modelo.Cantidad,
+                    PrecioUnitario = producto.Precio,
+                    Importe = Redondear(modelo.Cantidad * producto.Precio),
+                    Notas = Normalizar(modelo.Notas)
+                };
+                _db.ComandaDetalles.Add(detalle);
+                await _db.SaveChangesAsync();
+
+                await RecalcularComandaAsync(comanda.IdComanda);
+
+                await _auditoria.RegistrarAsync(
+                    "ComandaDetalle",
+                    detalle.IdComandaDetalle.ToString(),
+                    "AGREGAR_PRODUCTO",
+                    null,
+                    new
+                    {
+                        detalle.IdComanda,
+                        detalle.IdComandaDetalle,
+                        detalle.IdProducto,
+                        detalle.Cantidad,
+                        detalle.PrecioUnitario,
+                        detalle.Importe,
+                        detalle.Notas
+                    });
+
+                await tx.CommitAsync();
+
+                var estado = await ConstruirEstadoAsync(comanda.IdComanda, idCaja.Value, idSesion.Value);
+                return Json(new { ok = true, estado, mensaje = "Producto agregado." });
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error al agregar producto a comanda {IdComanda}.", modelo.IdComanda);
+            return JsonError("Ocurrió un error al agregar el producto.");
+        }
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> ModificarCantidad([FromBody] ModificarCantidadViewModel modelo)
+    {
+        var (idUsuario, idCaja, idSesion) = ObtenerContexto();
+        if (idUsuario is null || idCaja is null || idSesion is null)
+        {
+            return JsonError("No tienes una sesión de caja activa.");
+        }
+
+        if (modelo is null)
+        {
+            return JsonError("Datos inválidos.");
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return JsonError(ErrorModelState());
+        }
+
+        if (modelo.Cantidad <= 0)
+        {
+            return JsonError("La cantidad debe ser mayor a cero.");
+        }
+
+        try
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted);
+            try
+            {
+                var comanda = await ObtenerComandaOperativaAsync(modelo.IdComanda, idUsuario.Value, idCaja.Value, idSesion.Value);
+                if (comanda is null)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("La comanda no existe o no pertenece a tu sesión.");
+                }
+                if (comanda.Estado != EstadosComanda.ABIERTA)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("La comanda no está abierta.");
+                }
+
+                var detalle = await _db.ComandaDetalles
+                    .FirstOrDefaultAsync(d => d.IdComandaDetalle == modelo.IdComandaDetalle && d.IdComanda == modelo.IdComanda);
+
+                if (detalle is null)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("La partida no existe en esta comanda.");
+                }
+
+                var anterior = new { detalle.Cantidad, detalle.Notas };
+
+                detalle.Cantidad = modelo.Cantidad;
+                detalle.Importe = Redondear(detalle.Cantidad * detalle.PrecioUnitario);
+                if (modelo.Notas is not null)
+                {
+                    detalle.Notas = Normalizar(modelo.Notas);
+                }
+
+                await _db.SaveChangesAsync();
+                await RecalcularComandaAsync(comanda.IdComanda);
+
+                await _auditoria.RegistrarAsync(
+                    "ComandaDetalle",
+                    detalle.IdComandaDetalle.ToString(),
+                    "MODIFICAR_DETALLE",
+                    anterior,
+                    new { detalle.IdComanda, detalle.IdComandaDetalle, detalle.Cantidad, detalle.Importe, detalle.Notas });
+
+                await tx.CommitAsync();
+
+                var estado = await ConstruirEstadoAsync(comanda.IdComanda, idCaja.Value, idSesion.Value);
+                return Json(new { ok = true, estado, mensaje = "Partida actualizada." });
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error al modificar partida de comanda {IdComanda}.", modelo.IdComanda);
+            return JsonError("Ocurrió un error al modificar la partida.");
+        }
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> QuitarDetalle([FromBody] QuitarDetalleViewModel modelo)
+    {
+        var (idUsuario, idCaja, idSesion) = ObtenerContexto();
+        if (idUsuario is null || idCaja is null || idSesion is null)
+        {
+            return JsonError("No tienes una sesión de caja activa.");
+        }
+
+        if (modelo is null)
+        {
+            return JsonError("Datos inválidos.");
+        }
+
+        try
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted);
+            try
+            {
+                var comanda = await ObtenerComandaOperativaAsync(modelo.IdComanda, idUsuario.Value, idCaja.Value, idSesion.Value);
+                if (comanda is null)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("La comanda no existe o no pertenece a tu sesión.");
+                }
+                if (comanda.Estado != EstadosComanda.ABIERTA)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("La comanda no está abierta.");
+                }
+
+                var detalle = await _db.ComandaDetalles
+                    .FirstOrDefaultAsync(d => d.IdComandaDetalle == modelo.IdComandaDetalle && d.IdComanda == modelo.IdComanda);
+
+                if (detalle is null)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("La partida no existe en esta comanda.");
+                }
+
+                var idDetalle = detalle.IdComandaDetalle;
+                var idProducto = detalle.IdProducto;
+                _db.ComandaDetalles.Remove(detalle);
+                await _db.SaveChangesAsync();
+
+                await RecalcularComandaAsync(comanda.IdComanda);
+
+                await _auditoria.RegistrarAsync(
+                    "ComandaDetalle",
+                    idDetalle.ToString(),
+                    "QUITAR_PRODUCTO",
+                    new { IdComandaDetalle = idDetalle, IdProducto = idProducto },
+                    null);
+
+                await tx.CommitAsync();
+
+                var estado = await ConstruirEstadoAsync(comanda.IdComanda, idCaja.Value, idSesion.Value);
+                return Json(new { ok = true, estado, mensaje = "Partida eliminada." });
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error al quitar partida de comanda {IdComanda}.", modelo.IdComanda);
+            return JsonError("Ocurrió un error al quitar la partida.");
+        }
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> RegistrarPago([FromBody] RegistrarPagoViewModel modelo)
+    {
+        var (idUsuario, idCaja, idSesion) = ObtenerContexto();
+        if (idUsuario is null || idCaja is null || idSesion is null)
+        {
+            return JsonError("No tienes una sesión de caja activa.");
+        }
+
+        if (modelo is null)
+        {
+            return JsonError("Datos inválidos.");
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return JsonError(ErrorModelState());
+        }
+
+        if (modelo.Importe <= 0)
+        {
+            return JsonError("El importe debe ser mayor a cero.");
+        }
+
+        var idSucursal = ObtenerClaimInt("IdSucursal");
+        var idEmpresa = ObtenerClaimInt("IdEmpresa");
+        if (idSucursal is null || idEmpresa is null)
+        {
+            return JsonError("No se pudieron identificar tus datos operativos.");
+        }
+
+        try
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted);
+            try
+            {
+                var comanda = await _db.Comandas
+                    .FromSqlRaw("SELECT * FROM Comandas WHERE IdComanda = {0} FOR UPDATE", modelo.IdComanda)
+                    .FirstOrDefaultAsync();
+
+                if (comanda is null)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("La comanda no existe.");
+                }
+
+                if (comanda.IdCaja != idCaja || comanda.IdSesionCaja != idSesion || comanda.IdSucursal != idSucursal || comanda.IdUsuario != idUsuario)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("La comanda no pertenece a tu sesión.");
+                }
+
+                if (comanda.Estado != EstadosComanda.ABIERTA)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("La comanda ya está cerrada.");
+                }
+
+                if (!await ValidarSesionCajaAsync(idUsuario.Value, idCaja.Value, idSesion.Value))
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("La sesión de caja no está disponible.");
+                }
+
+                var pagado = await _db.Pagos
+                    .Where(p => p.IdComanda == comanda.IdComanda)
+                    .SumAsync(p => (decimal?)p.Importe) ?? 0m;
+
+                var saldo = Redondear(comanda.Total - pagado);
+                if (saldo <= 0)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("La comanda ya está cubierta.");
+                }
+
+                var metodo = await _db.MetodosPago
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(m => m.IdMetodoPago == modelo.IdMetodoPago && m.Activo && m.IdEmpresa == idEmpresa);
+
+                if (metodo is null)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("El método de pago no existe o no está activo.");
+                }
+
+                if (metodo.RequiereReferencia && string.IsNullOrWhiteSpace(modelo.Referencia))
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("La referencia es obligatoria para este método de pago.");
+                }
+
+                decimal importeAplicar;
+                decimal cambio = 0m;
+
+                if (metodo.PermiteCambio)
+                {
+                    importeAplicar = Math.Min(modelo.Importe, saldo);
+                    cambio = Redondear(modelo.Importe - importeAplicar);
+                }
+                else
+                {
+                    if (modelo.Importe > saldo)
+                    {
+                        await tx.RollbackAsync();
+                        return JsonError("El pago excede el saldo pendiente.");
+                    }
+                    importeAplicar = modelo.Importe;
+                }
+
+                var pago = new Pago
+                {
+                    IdComanda = comanda.IdComanda,
+                    IdMetodoPago = metodo.IdMetodoPago,
+                    IdCaja = idCaja,
+                    IdSesionCaja = idSesion,
+                    IdUsuario = idUsuario,
+                    MetodoPago = metodo.Codigo,
+                    Importe = importeAplicar,
+                    FechaPago = DateTime.Now,
+                    Referencia = Normalizar(modelo.Referencia)
+                };
+                _db.Pagos.Add(pago);
+                await _db.SaveChangesAsync();
+
+                var nuevoSaldo = Redondear(saldo - importeAplicar);
+                var comandaCerrada = nuevoSaldo <= 0;
+
+                if (comandaCerrada)
+                {
+                    comanda.Estado = EstadosComanda.CERRADA;
+                    comanda.FechaCierre = DateTime.Now;
+                    await _db.SaveChangesAsync();
+                }
+
+                await _auditoria.RegistrarAsync(
+                    "Pago",
+                    pago.IdPago.ToString(),
+                    "REGISTRAR_PAGO",
+                    null,
+                    new
+                    {
+                        pago.IdComanda,
+                        pago.IdPago,
+                        pago.IdMetodoPago,
+                        pago.MetodoPago,
+                        pago.Importe,
+                        pago.Referencia,
+                        pago.IdCaja,
+                        pago.IdSesionCaja,
+                        pago.IdUsuario
+                    });
+
+                if (comandaCerrada)
+                {
+                    await _auditoria.RegistrarAsync(
+                        "Comanda",
+                        comanda.IdComanda.ToString(),
+                        "CERRAR_COMANDA",
+                        null,
+                        new
+                        {
+                            comanda.IdComanda,
+                            comanda.Folio,
+                            comanda.Total,
+                            comanda.FechaCierre,
+                            comanda.Estado
+                        });
+                }
+
+                await tx.CommitAsync();
+
+                var estado = await ConstruirEstadoAsync(comanda.IdComanda, idCaja.Value, idSesion.Value);
+                return Json(new
+                {
+                    ok = true,
+                    cambio,
+                    saldo = nuevoSaldo,
+                    comandaCerrada,
+                    estado,
+                    mensaje = comandaCerrada ? "Comanda cobrada." : "Pago registrado."
+                });
+            }
+            catch
+            {
+                await tx.RollbackAsync();
+                throw;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error al registrar pago en comanda {IdComanda}.", modelo.IdComanda);
+            return JsonError("Ocurrió un error al registrar el pago.");
+        }
+    }
+
+    private async Task<bool> ValidarSesionCajaAsync(int idUsuario, int idCaja, long idSesion)
+    {
+        return await _db.Cajas
+            .AsNoTracking()
+            .AnyAsync(c =>
+                c.IdCaja == idCaja &&
+                c.Activo &&
+                c.Sucursal.Activo &&
+                c.Sucursal.Empresa.Activo &&
+                c.SesionesCaja.Any(sc =>
+                    sc.IdSesionCaja == idSesion &&
+                    sc.Estado == EstadosSesionCaja.ABIERTA &&
+                    sc.IdUsuarioApertura == idUsuario));
+    }
+
+    private async Task<Comanda?> ObtenerComandaOperativaAsync(long idComanda, int idUsuario, int idCaja, long idSesion)
+    {
+        var idSucursal = ObtenerClaimInt("IdSucursal");
+        if (idSucursal is null)
+        {
+            return null;
+        }
+
+        var comanda = await _db.Comandas
+            .FromSqlRaw("SELECT * FROM Comandas WHERE IdComanda = {0} FOR UPDATE", idComanda)
+            .FirstOrDefaultAsync();
+
+        if (comanda is null)
+        {
+            return null;
+        }
+
+        if (comanda.IdSucursal != idSucursal ||
+            comanda.IdCaja != idCaja ||
+            comanda.IdSesionCaja != idSesion ||
+            comanda.IdUsuario != idUsuario)
+        {
+            return null;
+        }
+
+        return comanda;
+    }
+
+    private async Task<string> GenerarFolioAsync(int idSucursal)
+    {
+        var sucursal = await _db.Sucursales
+            .FromSqlRaw("SELECT * FROM Sucursales WHERE IdSucursal = {0} FOR UPDATE", idSucursal)
+            .FirstOrDefaultAsync();
+
+        if (sucursal is null)
+        {
+            throw new InvalidOperationException($"La sucursal {idSucursal} no existe.");
+        }
+
+        var sec = await _db.FoliosSecuencia
+            .FromSqlRaw("SELECT * FROM FoliosSecuencia WHERE IdSucursal = {0} AND TipoDocumento = {1} FOR UPDATE", idSucursal, TipoDocumentoComanda)
+            .FirstOrDefaultAsync();
+
+        if (sec is null)
+        {
+            sec = new FolioSecuencia
+            {
+                IdSucursal = idSucursal,
+                TipoDocumento = TipoDocumentoComanda,
+                UltimoNumero = 0,
+                Longitud = LongitudFolioPredeterminada,
+                FechaModificacion = DateTime.Now
+            };
+            _db.FoliosSecuencia.Add(sec);
+            await _db.SaveChangesAsync();
+        }
+
+        sec.UltimoNumero += 1;
+        sec.FechaModificacion = DateTime.Now;
+        await _db.SaveChangesAsync();
+
+        var patron = new string('0', sec.Longitud);
+        return (sec.Prefijo ?? string.Empty) + sec.UltimoNumero.ToString(patron);
+    }
+
+    private async Task RecalcularComandaAsync(long idComanda)
+    {
+        var comanda = await _db.Comandas
+            .Include(c => c.Detalles)
+                .ThenInclude(d => d.Producto)
+                    .ThenInclude(p => p.ProductosImpuestos)
+                        .ThenInclude(pi => pi.Impuesto)
+            .FirstOrDefaultAsync(c => c.IdComanda == idComanda);
+
+        if (comanda is null)
+        {
+            return;
+        }
+
+        decimal subtotal = 0m;
+        decimal impuestos = 0m;
+
+        foreach (var d in comanda.Detalles)
+        {
+            var baseDetalle = Redondear(d.Cantidad * d.PrecioUnitario);
+            decimal impuestoIncluido = 0m;
+            decimal impuestoExtra = 0m;
+
+            var impuestosProducto = (d.Producto?.ProductosImpuestos ?? Enumerable.Empty<ProductoImpuesto>())
+                .Where(pi => pi.Impuesto != null && pi.Impuesto.Activo)
+                .Select(pi => pi.Impuesto);
+
+            foreach (var imp in impuestosProducto)
+            {
+                if (imp.IncluidoEnPrecio)
+                {
+                    impuestoIncluido += Redondear(baseDetalle * (imp.Tasa / (100m + imp.Tasa)));
+                }
+                else
+                {
+                    impuestoExtra += Redondear(baseDetalle * (imp.Tasa / 100m));
+                }
+            }
+
+            d.Importe = baseDetalle;
+            subtotal += Redondear(baseDetalle - impuestoIncluido);
+            impuestos += Redondear(impuestoIncluido + impuestoExtra);
+        }
+
+        comanda.Subtotal = Redondear(subtotal);
+        comanda.Impuestos = Redondear(impuestos);
+        comanda.Total = Redondear(comanda.Subtotal + comanda.Impuestos);
+
+        await _db.SaveChangesAsync();
+    }
+
+    private async Task<ComandaEstadoViewModel> ConstruirEstadoAsync(long idComanda, int idCaja, long idSesion)
+    {
+        var comanda = await _db.Comandas
+            .AsNoTracking()
+            .Where(c => c.IdComanda == idComanda && c.IdCaja == idCaja && c.IdSesionCaja == idSesion)
+            .Select(c => new ComandaEstadoViewModel
+            {
+                IdComanda = c.IdComanda,
+                Folio = c.Folio ?? string.Empty,
+                Estado = c.Estado,
+                Subtotal = c.Subtotal,
+                Impuestos = c.Impuestos,
+                Total = c.Total,
+                ComandaCerrada = c.Estado == EstadosComanda.CERRADA,
+                Partidas = c.Detalles
+                    .OrderBy(d => d.IdComandaDetalle)
+                    .Select(d => new ComandaItemViewModel
+                    {
+                        IdComandaDetalle = d.IdComandaDetalle,
+                        IdProducto = d.IdProducto,
+                        Producto = d.Producto.Nombre,
+                        Cantidad = d.Cantidad,
+                        PrecioUnitario = d.PrecioUnitario,
+                        Importe = d.Importe,
+                        Notas = d.Notas
+                    })
+                    .ToList(),
+                Pagos = c.Pagos
+                    .OrderBy(p => p.FechaPago)
+                    .Select(p => new PagoItemViewModel
+                    {
+                        IdPago = p.IdPago,
+                        MetodoPago = p.MetodoPago,
+                        Importe = p.Importe,
+                        FechaPago = p.FechaPago,
+                        Referencia = p.Referencia
+                    })
+                    .ToList()
+            })
+            .FirstOrDefaultAsync();
+
+        if (comanda is null)
+        {
+            return new ComandaEstadoViewModel { IdComanda = idComanda };
+        }
+
+        var pagado = comanda.Pagos.Sum(p => p.Importe);
+        comanda.Saldo = Redondear(comanda.Total - pagado);
+        return comanda;
+    }
+
+    private (int? IdUsuario, int? IdCaja, long? IdSesionCaja) ObtenerContexto()
+    {
+        var idUsuario = ObtenerIdUsuario();
+        var idCaja = ObtenerClaimInt(ClaimIdCaja);
+        var idSesion = ObtenerClaimLong(ClaimIdSesionCaja);
+        return (idUsuario, idCaja, idSesion);
+    }
+
+    private int? ObtenerIdUsuario()
+    {
+        var valor = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        return int.TryParse(valor, out var id) ? id : null;
+    }
+
+    private int? ObtenerClaimInt(string tipo)
+    {
+        var valor = User.FindFirstValue(tipo);
+        return int.TryParse(valor, out var id) ? id : null;
+    }
+
+    private long? ObtenerClaimLong(string tipo)
+    {
+        var valor = User.FindFirstValue(tipo);
+        return long.TryParse(valor, out var id) ? id : null;
+    }
+
+    private static decimal Redondear(decimal valor)
+    {
+        return Math.Round(valor, 2, MidpointRounding.AwayFromZero);
+    }
+
+    private static string? Normalizar(string? valor)
+    {
+        return string.IsNullOrWhiteSpace(valor) ? null : valor.Trim();
+    }
+
+    private JsonResult JsonOk(string mensaje)
+    {
+        return Json(new { ok = true, mensaje });
+    }
+
+    private JsonResult JsonError(string mensaje)
+    {
+        return Json(new { ok = false, mensaje });
+    }
+
+    private string ErrorModelState()
+    {
+        return ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage).FirstOrDefault() ?? "Datos inválidos.";
+    }
+}

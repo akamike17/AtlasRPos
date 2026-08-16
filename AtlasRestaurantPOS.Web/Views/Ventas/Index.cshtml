@@ -1,0 +1,350 @@
+@model AtlasRestaurantPOS.Web.Models.ViewModels.VentasIndexViewModel
+@{
+    ViewData["Title"] = "Punto de Venta";
+}
+
+<h1 class="mb-3">Punto de Venta</h1>
+<p class="text-muted">Caja @Model.Codigo - @Model.Nombre (Sucursal: @Model.Sucursal)</p>
+
+<div class="row">
+    <div class="col-lg-7 mb-3">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Productos</h5>
+                <ul class="nav nav-pills mb-3" id="pestanasCategoria" role="tablist">
+                    @for (var i = 0; i < Model.Categorias.Count; i++)
+                    {
+                        var cat = Model.Categorias[i];
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link @(i == 0 ? "active" : "")" id="cat-@cat.IdCategoriaProducto-tab" data-bs-toggle="pill"
+                                    data-bs-target="#cat-@cat.IdCategoriaProducto" type="button" role="tab">@cat.Nombre</button>
+                        </li>
+                    }
+                    @if (Model.Categorias.Count == 0)
+                    {
+                        <li class="nav-item"><span class="nav-link text-muted disabled">Sin categorías</span></li>
+                    }
+                </ul>
+                <div class="tab-content" id="contenidoCategorias">
+                    @for (var i = 0; i < Model.Categorias.Count; i++)
+                    {
+                        var cat = Model.Categorias[i];
+                        <div class="tab-pane fade @(i == 0 ? "show active" : "")" id="cat-@cat.IdCategoriaProducto" role="tabpanel">
+                            <div class="row g-2">
+                                @foreach (var p in cat.Productos)
+                                {
+                                    <div class="col-6 col-md-4">
+                                        <button type="button" class="btn btn-outline-primary w-100 h-100 d-flex flex-column align-items-center justify-content-center py-3"
+                                                data-nombre="@p.Nombre" data-id="@p.IdProducto" onclick="agregar(@p.IdProducto)">
+                                            <span class="fw-bold">@p.Nombre</span>
+                                            <span class="text-muted">@p.Precio.ToString("C")</span>
+                                        </button>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-5 mb-3">
+        <div class="card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h5 class="card-title mb-0">Comanda actual</h5>
+                    <button type="button" class="btn btn-success btn-sm" onclick="nuevaComanda()">Nueva comanda</button>
+                </div>
+                <div id="estadoComanda" class="text-muted">Crea una comanda para comenzar.</div>
+                <div id="panelComanda" style="display:none;">
+                    <div class="d-flex justify-content-between mb-2">
+                        <strong>Folio: <span id="folioComanda"></span></strong>
+                        <span id="badgeEstado" class="badge bg-success">ABIERTA</span>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Producto</th>
+                                    <th style="width:150px;">Cantidad</th>
+                                    <th>Nota</th>
+                                    <th class="text-end">P.Unit</th>
+                                    <th class="text-end">Importe</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="partidas"></tbody>
+                        </table>
+                    </div>
+                    <hr />
+                    <div class="d-flex justify-content-between"><span>Subtotal</span><span id="lblSubtotal"></span></div>
+                    <div class="d-flex justify-content-between"><span>Impuestos</span><span id="lblImpuestos"></span></div>
+                    <div class="d-flex justify-content-between fs-5 fw-bold"><span>Total</span><span id="lblTotal"></span></div>
+                    <button type="button" class="btn btn-primary w-100 mt-3" id="btnCobrar" onclick="abrirCobrar()">Cobrar</button>
+                    <div class="alert alert-success mt-2 mb-0" id="alertCerrada" style="display:none;">
+                        Comanda cobrada. <button type="button" class="btn btn-sm btn-outline-success" onclick="nuevaComanda()">Nueva comanda</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="modalCobrar" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Cobrar comanda <span id="folioCobrar"></span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="d-flex justify-content-between fs-5 mb-2">
+                    <span>Saldo pendiente</span><strong id="saldoCobrar"></strong>
+                </div>
+                <div class="table-responsive mb-2">
+                    <table class="table table-sm">
+                        <thead><tr><th>Pago</th><th>Importe</th><th>Referencia</th></tr></thead>
+                        <tbody id="pagosAplicados"></tbody>
+                    </table>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label">Método de pago</label>
+                    <select id="metodoPago" class="form-select" onchange="cambiarMetodo()">
+                        @foreach (var m in Model.MetodosPago)
+                        {
+                            <option value="@m.IdMetodoPago" data-codigo="@m.Codigo"
+                                    data-cambio="@(m.PermiteCambio ? "true" : "false")"
+                                    data-ref="@(m.RequiereReferencia ? "true" : "false")">@m.Nombre</option>
+                        }
+                    </select>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label" id="lblImportePago">Importe / Efectivo recibido</label>
+                    <input type="number" step="0.01" min="0.01" class="form-control" id="importePago" />
+                </div>
+                <div class="mb-2" id="campoReferencia" style="display:none;">
+                    <label class="form-label">Referencia</label>
+                    <input type="text" class="form-control" id="referenciaPago" maxlength="200" />
+                </div>
+                <div class="alert alert-success mb-2" id="cambioInfo" style="display:none;"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+                <button type="button" class="btn btn-primary" onclick="registrarPago()">Registrar pago</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@Html.AntiForgeryToken()
+@await Html.PartialAsync("_Toast")
+
+<script>
+    var csrf = document.querySelector('input[name="__RequestVerificationToken"]').value;
+    var estado = null;
+
+    function fmt(n) {
+        return Number(n).toFixed(2);
+    }
+
+    function postJson(url, body) {
+        return fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                'RequestVerificationToken': csrf
+            },
+            body: JSON.stringify(body)
+        }).then(function (r) {
+            if (r.status === 401 || r.status === 403) {
+                mostrarToast('Sesión no autorizada.', 'error');
+                return null;
+            }
+            return r.json();
+        }).catch(function () {
+            mostrarToast('No se pudo completar la operación. Inténtalo de nuevo.', 'error');
+            return null;
+        });
+    }
+
+    function nuevaComanda() {
+        postJson('/Ventas/NuevaComanda', {}).then(function (d) {
+            if (d && d.ok) {
+                estado = { idComanda: d.idComanda, folio: d.folio, estado: 'ABIERTA', subtotal: 0, impuestos: 0, total: 0, saldo: 0, comandaCerrada: false, partidas: [], pagos: [] };
+                render();
+            } else if (d) {
+                mostrarToast(d.mensaje || 'Error al crear comanda.', 'error');
+            }
+        });
+    }
+
+    function agregar(idProducto) {
+        if (!estado) { mostrarToast('Primero crea una comanda.', 'error'); return; }
+        postJson('/Ventas/AgregarProducto', { idComanda: estado.idComanda, idProducto: idProducto, cantidad: 1, notas: '' }).then(function (d) {
+            if (d && d.ok) { estado = d.estado; render(); }
+            else if (d) { mostrarToast(d.mensaje || 'Error al agregar.', 'error'); }
+        });
+    }
+
+    function cambiarCantidad(idDetalle, delta) {
+        var input = document.getElementById('qty-' + idDetalle);
+        var actual = parseFloat(input.value);
+        if (isNaN(actual)) return;
+        var nueva = Math.max(0.001, actual + delta);
+        modificarCantidad(idDetalle, nueva, null);
+    }
+
+    function aplicarCantidad(idDetalle) {
+        var input = document.getElementById('qty-' + idDetalle);
+        var valor = parseFloat(input.value);
+        if (isNaN(valor) || valor <= 0) { mostrarToast('La cantidad debe ser mayor a cero.', 'error'); input.value = ''; return; }
+        modificarCantidad(idDetalle, valor, null);
+    }
+
+    function aplicarNotas(idDetalle) {
+        var qty = document.getElementById('qty-' + idDetalle);
+        var notas = document.getElementById('notas-' + idDetalle);
+        var valorQty = parseFloat(qty.value);
+        if (isNaN(valorQty) || valorQty <= 0) { mostrarToast('La cantidad debe ser mayor a cero.', 'error'); return; }
+        modificarCantidad(idDetalle, valorQty, notas.value);
+    }
+
+    function modificarCantidad(idDetalle, cantidad, notas) {
+        if (!estado) return;
+        var body = { idComanda: estado.idComanda, idComandaDetalle: idDetalle, cantidad: cantidad };
+        if (notas !== null) { body.notas = notas; }
+        postJson('/Ventas/ModificarCantidad', body).then(function (d) {
+            if (d && d.ok) { estado = d.estado; render(); }
+            else if (d) { mostrarToast(d.mensaje || 'Error al modificar.', 'error'); render(); }
+        });
+    }
+
+    function quitar(idDetalle) {
+        if (!estado) return;
+        postJson('/Ventas/QuitarDetalle', { idComanda: estado.idComanda, idComandaDetalle: idDetalle }).then(function (d) {
+            if (d && d.ok) { estado = d.estado; render(); }
+            else if (d) { mostrarToast(d.mensaje || 'Error al quitar.', 'error'); }
+        });
+    }
+
+    function render() {
+        var panel = document.getElementById('panelComanda');
+        if (!estado) {
+            panel.style.display = 'none';
+            document.getElementById('estadoComanda').style.display = '';
+            return;
+        }
+        document.getElementById('estadoComanda').style.display = 'none';
+        panel.style.display = '';
+        document.getElementById('folioComanda').textContent = estado.folio;
+        document.getElementById('lblSubtotal').textContent = fmt(estado.subtotal);
+        document.getElementById('lblImpuestos').textContent = fmt(estado.impuestos);
+        document.getElementById('lblTotal').textContent = fmt(estado.total);
+
+        var badge = document.getElementById('badgeEstado');
+        var btnCobrar = document.getElementById('btnCobrar');
+        var alertCerrada = document.getElementById('alertCerrada');
+        if (estado.comandaCerrada) {
+            badge.className = 'badge bg-secondary';
+            badge.textContent = 'CERRADA';
+            btnCobrar.style.display = 'none';
+            alertCerrada.style.display = '';
+        } else {
+            badge.className = 'badge bg-success';
+            badge.textContent = 'ABIERTA';
+            btnCobrar.style.display = '';
+            alertCerrada.style.display = 'none';
+        }
+
+        var tbody = document.getElementById('partidas');
+        tbody.innerHTML = '';
+        if (estado.partidas.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">Sin partidas.</td></tr>';
+            return;
+        }
+        estado.partidas.forEach(function (p) {
+            var tr = document.createElement('tr');
+            var notas = p.notas || '';
+            tr.innerHTML =
+                '<td>' + escapeHtml(p.producto) + '</td>' +
+                '<td><div class="d-flex align-items-center gap-1">' +
+                '<button type="button" class="btn btn-sm btn-outline-secondary" onclick="cambiarCantidad(' + p.idComandaDetalle + ',-1)">-</button>' +
+                '<input id="qty-' + p.idComandaDetalle + '" type="number" step="0.001" min="0.001" class="form-control form-control-sm" style="width:75px;" value="' + p.cantidad + '" onchange="aplicarCantidad(' + p.idComandaDetalle + ')" />' +
+                '<button type="button" class="btn btn-sm btn-outline-secondary" onclick="cambiarCantidad(' + p.idComandaDetalle + ',1)">+</button>' +
+                '</div></td>' +
+                '<td><input id="notas-' + p.idComandaDetalle + '" type="text" class="form-control form-control-sm" maxlength="500" value="' + escapeHtml(notas) + '" onchange="aplicarNotas(' + p.idComandaDetalle + ')" /></td>' +
+                '<td class="text-end">' + fmt(p.precioUnitario) + '</td>' +
+                '<td class="text-end">' + fmt(p.importe) + '</td>' +
+                '<td><button type="button" class="btn btn-sm btn-outline-danger" onclick="quitar(' + p.idComandaDetalle + ')">Quitar</button></td>';
+            tbody.appendChild(tr);
+        });
+    }
+
+    function abrirCobrar() {
+        if (!estado || estado.comandaCerrada) return;
+        document.getElementById('folioCobrar').textContent = estado.folio;
+        document.getElementById('importePago').value = '';
+        document.getElementById('referenciaPago').value = '';
+        document.getElementById('cambioInfo').style.display = 'none';
+        cambiarMetodo();
+        renderCobrar();
+        var modal = new bootstrap.Modal(document.getElementById('modalCobrar'));
+        modal.show();
+    }
+
+    function cambiarMetodo() {
+        var sel = document.getElementById('metodoPago');
+        var opt = sel.options[sel.selectedIndex];
+        var requiereRef = opt.getAttribute('data-ref') === 'true';
+        document.getElementById('campoReferencia').style.display = requiereRef ? '' : 'none';
+        document.getElementById('lblImportePago').textContent = opt.getAttribute('data-cambio') === 'true' ? 'Efectivo recibido' : 'Importe';
+    }
+
+    function renderCobrar() {
+        if (!estado) return;
+        document.getElementById('saldoCobrar').textContent = fmt(estado.saldo);
+        var tbody = document.getElementById('pagosAplicados');
+        tbody.innerHTML = '';
+        estado.pagos.forEach(function (p) {
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td>' + escapeHtml(p.metodoPago) + '</td><td class="text-end">' + fmt(p.importe) + '</td><td>' + escapeHtml(p.referencia || '') + '</td>';
+            tbody.appendChild(tr);
+        });
+        if (estado.pagos.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">Sin pagos.</td></tr>';
+        }
+    }
+
+    function registrarPago() {
+        var idMetodo = parseInt(document.getElementById('metodoPago').value);
+        var importe = parseFloat(document.getElementById('importePago').value);
+        var referencia = document.getElementById('referenciaPago').value;
+        if (isNaN(importe) || importe <= 0) { mostrarToast('Importe inválido.', 'error'); return; }
+        postJson('/Ventas/RegistrarPago', { idComanda: estado.idComanda, idMetodoPago: idMetodo, importe: importe, referencia: referencia }).then(function (d) {
+            if (d && d.ok) {
+                estado = d.estado;
+                if (d.cambio > 0) {
+                    document.getElementById('cambioInfo').textContent = 'Cambio a devolver: ' + fmt(d.cambio);
+                    document.getElementById('cambioInfo').style.display = '';
+                }
+                if (d.comandaCerrada) {
+                    mostrarToast('Comanda ' + estado.folio + ' cobrada.', 'success');
+                    bootstrap.Modal.getInstance(document.getElementById('modalCobrar')).hide();
+                    render();
+                } else {
+                    renderCobrar();
+                    document.getElementById('importePago').value = '';
+                }
+            } else if (d) {
+                mostrarToast(d.mensaje || 'Error al registrar el pago.', 'error');
+            }
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        cambiarMetodo();
+    });
+</script>

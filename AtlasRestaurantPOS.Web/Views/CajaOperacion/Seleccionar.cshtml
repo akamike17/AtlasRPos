@@ -1,0 +1,82 @@
+@model AtlasRestaurantPOS.Web.Models.ViewModels.SeleccionCajaViewModel
+@{
+    ViewData["Title"] = "Seleccionar Caja";
+}
+
+<h1 class="mb-3">Seleccionar Caja</h1>
+<p class="text-muted">Elige una caja para iniciar o reanudar la operación.</p>
+
+@if (TempData["CajaOperacionError"] is string errorMsg)
+{
+    <div class="alert alert-danger">@errorMsg</div>
+}
+@if (TempData["CajaOperacionExito"] is string exitoMsg)
+{
+    <div class="alert alert-success">@exitoMsg</div>
+}
+
+@if (Model.Cajas.Count == 0)
+{
+    <div class="alert alert-warning">No hay cajas disponibles en tu sucursal.</div>
+}
+
+<div class="row">
+    @foreach (var caja in Model.Cajas)
+    {
+        <div class="col-md-4 mb-3">
+            <div class="card h-100">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <strong>@caja.Codigo - @caja.Nombre</strong>
+                    @if (caja.Estado == "DISPONIBLE")
+                    {
+                        <span class="badge bg-success">DISPONIBLE</span>
+                    }
+                    else
+                    {
+                        <span class="badge bg-warning text-dark">ABIERTA</span>
+                    }
+                </div>
+                <div class="card-body">
+                    <p class="card-text">@(string.IsNullOrWhiteSpace(caja.Descripcion) ? "Sin descripción" : caja.Descripcion)</p>
+
+                    @if (caja.Estado == "DISPONIBLE")
+                    {
+                        <form asp-action="Abrir" method="post">
+                            @Html.AntiForgeryToken()
+                            <input type="hidden" name="IdCaja" value="@caja.IdCaja" />
+                            <div class="mb-2">
+                                <label class="form-label">Fondo inicial</label>
+                                <input type="number" step="0.01" min="0" class="form-control" name="FondoInicial" value="0" required />
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label">Observaciones (opcional)</label>
+                                <input type="text" class="form-control" name="Observaciones" maxlength="500" />
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">Abrir caja</button>
+                        </form>
+                    }
+                    else if (caja.EsPropia)
+                    {
+                        <p>
+                            <span class="badge bg-info text-dark">Sesión tuya</span>
+                            Abierta por <strong>@caja.UsuarioApertura</strong> el @(caja.FechaApertura?.ToString("g"))
+                        </p>
+                        <form asp-action="Reanudar" method="post">
+                            @Html.AntiForgeryToken()
+                            <input type="hidden" name="IdCaja" value="@caja.IdCaja" />
+                            <button type="submit" class="btn btn-success w-100">Reanudar</button>
+                        </form>
+                    }
+                    else
+                    {
+                        <p>
+                            <span class="badge bg-secondary">Ocupada</span>
+                            Abierta por <strong>@caja.UsuarioApertura</strong> el @(caja.FechaApertura?.ToString("g"))
+                        </p>
+                        <p class="text-muted mb-0">No puedes tomar una caja abierta por otro usuario.</p>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+</div>

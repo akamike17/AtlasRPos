@@ -1,0 +1,54 @@
+# ===== .NET / ASP.NET Core =====
+bin/
+obj/
+*.dll
+*.pdb
+*.exe
+*.user
+*.userosscache
+*.suo
+*.userprefs
+project.lock.json
+*.csproj.user
+
+# ===== NuGet / restore =====
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+
+# ===== Visual Studio / IDE =====
+.vs/
+.vscode/
+.idea/
+*.csproj.nuget.*
+
+# ===== Pruebas / cobertura =====
+TestResults/
+*.coverage
+*.coveragexml
+*.trx
+*.testresults
+
+# ===== Logs / artefactos de prueba / temporales =====
+*.log
+logs/
+server.out
+server.err
+server.pid
+resultados.txt
+concurrent_raw.txt
+*.tmp
+*.temp
+
+# ===== OpenCode (se conserva .opencode/commands/) =====
+.opencode/sessions/
+.opencode/history/
+.opencode/cache/
+.opencode/*.tmp
+
+# ===== Windows / OS =====
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+*.lnk

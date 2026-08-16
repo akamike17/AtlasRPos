@@ -1,0 +1,29 @@
+﻿@using System.Security.Claims
+@{
+    ViewData["Title"] = "Panel principal";
+}
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h1 class="h4 mb-3">Panel principal</h1>
+                <dl class="row mb-0">
+                    <dt class="col-sm-4">Usuario</dt>
+                    <dd class="col-sm-8">@User.FindFirstValue(ClaimTypes.Name)</dd>
+                    <dt class="col-sm-4">Rol</dt>
+                    <dd class="col-sm-8">@User.FindFirstValue(ClaimTypes.Role)</dd>
+                    <dt class="col-sm-4">Empresa (Id)</dt>
+                    <dd class="col-sm-8">@User.FindFirstValue("IdEmpresa")</dd>
+                    <dt class="col-sm-4">Sucursal (Id)</dt>
+                    <dd class="col-sm-8">@User.FindFirstValue("IdSucursal")</dd>
+                    <dt class="col-sm-4">Sesión</dt>
+                    <dd class="col-sm-8">Iniciada</dd>
+                </dl>
+                <form asp-controller="Acceso" asp-action="Logout" method="post" class="mt-3">
+                    <button type="submit" class="btn btn-outline-danger btn-sm">Cerrar sesión</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
