@@ -1,0 +1,208 @@
+@model AtlasRestaurantPOS.Web.Models.ViewModels.SalonIndexViewModel
+@{
+    ViewData["Title"] = "Salón / Mesas";
+}
+
+@Html.AntiForgeryToken()
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="h4 mb-0">Salón / Mesas</h1>
+    <button type="button" class="btn btn-outline-secondary" onclick="recargar()">Actualizar</button>
+</div>
+
+@if (TempData["SalonError"] != null)
+{
+    <div class="alert alert-warning">@TempData["SalonError"]</div>
+}
+
+<div class="row g-3" id="gridMesas">
+    @foreach (var mesa in Model.Mesas)
+    {
+        <div class="col-6 col-md-4 col-lg-3">
+            <div class="card @ClaseBorde(mesa.Estado) h-100">
+                <div class="card-body d-flex flex-column">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <h5 class="card-title mb-0">@mesa.Nombre</h5>
+                        <span class="badge @ClaseBadge(mesa.Estado)">@EtiquetaEstado(mesa.Estado)</span>
+                    </div>
+                    <p class="text-muted small mb-1">Capacidad: @mesa.Capacidad</p>
+                    @if (mesa.IdComanda.HasValue)
+                    {
+                        <p class="small mb-1">Folio: <strong>@mesa.Folio</strong></p>
+                        <p class="small mb-1">Total: <strong>@mesa.Total?.ToString("C")</strong></p>
+                        @if (!string.IsNullOrEmpty(mesa.UsuarioResponsable))
+                        {
+                            <p class="small text-muted mb-1">Atendido por: @mesa.UsuarioResponsable</p>
+                        }
+                    }
+                    else
+                    {
+                        <p class="small text-muted mb-1">Sin comanda abierta</p>
+                    }
+                    <div class="mt-auto pt-2">
+                        @if (mesa.Estado == "DISPONIBLE")
+                        {
+                            <button type="button" class="btn btn-success btn-sm w-100" onclick="abrirMesa(@mesa.IdMesa)">Abrir mesa</button>
+                        }
+                        else if (mesa.Estado == "OCUPADA" && mesa.EsPropia)
+                        {
+                            <div class="d-grid gap-2">
+                                <a class="btn btn-primary btn-sm" href="/Salon/Reanudar?idMesa=@mesa.IdMesa">Abrir cuenta</a>
+                                <button type="button" class="btn btn-outline-primary btn-sm" onclick="prepararTransferir(@mesa.IdMesa, '@mesa.Nombre')">Transferir</button>
+                            </div>
+                        }
+                        else if (mesa.Estado == "OCUPADA" && mesa.EsAjena)
+                        {
+                            <span class="text-muted small">Ocupada por otra sesión</span>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+    @if (Model.Mesas.Count == 0)
+    {
+        <div class="col-12">
+            <div class="alert alert-info">No hay mesas activas en esta sucursal.</div>
+        </div>
+    }
+</div>
+
+<div class="modal fade" id="modalTransferir" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Transferir comanda</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="mesaOrigenId" />
+                <p class="mb-2">Desde: <strong id="mesaOrigenNombre"></strong></p>
+                <div class="mb-2">
+                    <label class="form-label">Mesa destino</label>
+                    <select id="mesaDestino" class="form-select">
+                        <option value="">Seleccione...</option>
+                        @foreach (var mesa in Model.Mesas.Where(m => m.Estado == "DISPONIBLE"))
+                        {
+                            <option value="@mesa.IdMesa">@mesa.Nombre (Capacidad @mesa.Capacidad)</option>
+                        }
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="transferir()">Transferir</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@await Html.PartialAsync("_Toast")
+
+@section Scripts {
+<script>
+(function () {
+    const token = document.querySelector('input[name="__RequestVerificationToken"]').value;
+    const modalTransferirEl = document.getElementById('modalTransferir');
+    const modalTransferir = new bootstrap.Modal(modalTransferirEl);
+    let mesaOrigenId = null;
+
+    function postJson(url, body) {
+        return fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                'RequestVerificationToken': token
+            },
+            body: JSON.stringify(body)
+        }).then(function (r) {
+            if (r.status === 401 || r.status === 403) {
+                mostrarToast('Sesión no autorizada.', 'error');
+                return null;
+            }
+            return r.json();
+        }).catch(function () {
+            mostrarToast('No se pudo completar la operación. Inténtalo de nuevo.', 'error');
+            return null;
+        });
+    }
+
+    window.abrirMesa = function (idMesa) {
+        if (!confirm('¿Abrir la mesa? Se creará una comanda asociada.')) return;
+        postJson('/Salon/AbrirMesa', { idMesa: idMesa }).then(function (d) {
+            if (d && d.ok) {
+                mostrarToast(d.mensaje, 'ok');
+                setTimeout(function () {
+                    window.location.href = '/Ventas/Index?idComanda=' + d.idComanda;
+                }, 600);
+            } else if (d) {
+                mostrarToast(d.mensaje || 'No se pudo abrir la mesa.', 'error');
+            }
+        });
+    };
+
+    window.prepararTransferir = function (idMesa, nombre) {
+        mesaOrigenId = idMesa;
+        document.getElementById('mesaOrigenId').value = idMesa;
+        document.getElementById('mesaOrigenNombre').textContent = nombre;
+        document.getElementById('mesaDestino').value = '';
+        modalTransferir.show();
+    };
+
+    window.transferir = function () {
+        const destino = parseInt(document.getElementById('mesaDestino').value, 10);
+        if (!destino) { mostrarToast('Seleccione la mesa destino.', 'error'); return; }
+        postJson('/Salon/TransferirMesa', { idMesaOrigen: mesaOrigenId, idMesaDestino: destino }).then(function (d) {
+            if (d && d.ok) {
+                mostrarToast(d.mensaje, 'ok');
+                modalTransferir.hide();
+                setTimeout(recargar, 500);
+            } else if (d) {
+                mostrarToast(d.mensaje || 'No se pudo transferir.', 'error');
+            }
+        });
+    };
+
+    window.recargar = function () {
+        window.location.reload();
+    };
+})();
+</script>
+}
+
+@functions {
+    private static string ClaseBorde(string estado)
+    {
+        return estado switch
+        {
+            "OCUPADA" => "border-warning",
+            "RESERVADA" => "border-info",
+            "FUERA_SERVICIO" => "border-secondary",
+            _ => "border-success"
+        };
+    }
+
+    private static string ClaseBadge(string estado)
+    {
+        return estado switch
+        {
+            "OCUPADA" => "bg-warning text-dark",
+            "RESERVADA" => "bg-info text-dark",
+            "FUERA_SERVICIO" => "bg-secondary",
+            _ => "bg-success"
+        };
+    }
+
+    private static string EtiquetaEstado(string estado)
+    {
+        return estado switch
+        {
+            "OCUPADA" => "Ocupada",
+            "RESERVADA" => "Reservada",
+            "FUERA_SERVICIO" => "Fuera de servicio",
+            _ => "Disponible"
+        };
+    }
+}

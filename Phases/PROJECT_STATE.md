@@ -329,20 +329,61 @@ Deuda técnica NO bloqueante (no son fallos de Fase 7):
 1. Patrón heredado de edición: algunas vistas administrativas usan `Buscar?termino=<id>` para recuperar un registro antes de editar. Debe evaluarse posteriormente reemplazarlo por un endpoint `Obtener(id)` explícito.
 2. `Productos/gestionarImpuestos` crea nuevas instancias `bootstrap.Modal` repetidamente. Evaluar reutilización de instancia.
 
+### Fase 8 — Mesas y Salón
+
+Estado:
+`COMPLETADA Y VERIFICADA`
+
+Implementado físicamente:
+
+- CRUD de Mesas (búsqueda, crear, editar, activar/inactivar; duplicado por índice único `(IdSucursal, Nombre)`; inactivación bloqueada si la mesa tiene comanda ABIERTA; capacidad > 0; sucursal activa y empresa activa).
+- Pantalla Salón: mesas activas de la sucursal del usuario con caja/sesión; estado visual Disponible/Ocupada; comanda abierta asociada (folio, total, usuario responsable); distinción de ownership `EsPropia`/`EsAjena`.
+- Apertura de mesa: crea Comanda con folio generado por `FolioComandaService`; bloqueo `SELECT ... FOR UPDATE` sobre la mesa; validación de sucursal, activo y Disponible; auditoría `ABRIR_MESA`.
+- Reanudación: `Salon/Reanudar` redirige a Ventas con `idComanda`; validación de ownership estricta (sucursal, caja, sesión, usuario); auditoría `REANUDAR_COMANDA_MESA`.
+- Ownership: operaciones sobre comanda ajena rechazadas (transferir, pagar, reanudar).
+- Transferencia de mesa: transacción con locks deterministas `FOR UPDATE` por `IdMesa` orden menor → mayor (evita deadlocks); valida activas, sucursal, destino Disponible y sin comanda abierta; auditoría `TRANSFERIR_MESA`.
+- Concurrencia: doble apertura simultánea de la misma mesa → solo una comanda ABIERTA (verificado: 1 éxito de 2 solicitudes).
+- Integración con Ventas: `Ventas.Index(idComanda)` valida ownership y carga la comanda de mesa; endpoint `Ventas/Estado` para consulta; muestra `NombreMesa` en la cuenta; al cerrar la comanda con pago se libera la mesa (`FOR UPDATE` + auditoría `LIBERAR_MESA`).
+- Venta mostrador conservada: `NuevaComanda` sin mesa sigue operando y cerrando correctamente.
+- Pago parcial: mantiene la mesa OCUPADA; el cierre del total libera la mesa.
+- Extracción de `FolioComandaService` (`IFolioComandaService`) reutilizado por Ventas y Salón; registro DI en `Program.cs`.
+- Auditoría completa con `IAuditoriaService`; snapshots sin secretos.
+- Antiforgery en todo POST mutable; Fetch 401/403 manejados; navegación sin sesión → redirect a Login/Caja.
+
+Build final:
+`0 warnings / 0 errors`.
+
+Batería HTTP A–J:
+`50 PASS / 0 FAIL` (A CRUD Mesas, B Salón sin/con caja, C apertura, D concurrencia, E reanudación, F ownership, G transferencia, H venta en mesa, I mostrador, J auditoría).
+
+Evidencia persistente:
+`C:\Users\Admin\AppData\Local\Temp\opencode\fase8\resultados.txt`
+
+Migraciones:
+Ninguna requerida; schema existente suficiente (sin cambios de schema).
+
+Cleanup:
+- servidor detenido;
+- PID 9388 finalizado;
+- puerto 5250 libre;
+- sin código temporal en el repo;
+- sesiones de caja de prueba cerradas.
+
+Incidencia registrada (NO bloqueante, NO corregida en esta fase):
+- El password configurado actualmente en User Secrets para `InitialSetup:AdminPassword` no coincide con el `PasswordHash` actual del usuario `admin` (verificado con `PasswordHasher`). No se incluyen ni password ni hash en este registro. Pendiente de decisión futura; no se regeneró nada durante esta fase.
+
 ## Módulos todavía sin administración completa
 
 Modelos presentes sin CRUD/UI administrativo completo:
 
-- Mesa
 - ConfiguracionPos
 - Dispositivo
 - IntegracionExterna
 
 ## Próximo objetivo funcional
 
-Después de la administración comercial (Fase 7):
+Después de la administración comercial (Fase 7) y Mesas/Salón (Fase 8):
 
-- Mesas / salón
 - cocina / KDS
 - inventario / recetas
 - cancelaciones/devoluciones

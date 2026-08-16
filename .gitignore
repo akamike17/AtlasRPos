@@ -52,3 +52,6 @@ Thumbs.db
 Desktop.ini
 ehthumbs.db
 *.lnk
+
+# ===== Instrucciones de tarea (solo el archivo de próxima tarea) =====
+Instructions/NEXT_TASK.txt

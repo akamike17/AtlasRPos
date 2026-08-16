@@ -7,6 +7,7 @@ public class VentasIndexViewModel
     public string Sucursal { get; set; } = string.Empty;
     public List<CategoriaVentasViewModel> Categorias { get; set; } = new();
     public List<MetodoPagoViewModel> MetodosPago { get; set; } = new();
+    public long? IdComandaInicial { get; set; }
 }
 
 public class CategoriaVentasViewModel
@@ -67,6 +68,7 @@ public class ComandaEstadoViewModel
     public long IdComanda { get; set; }
     public string Folio { get; set; } = string.Empty;
     public string Estado { get; set; } = string.Empty;
+    public string? NombreMesa { get; set; }
     public decimal Subtotal { get; set; }
     public decimal Impuestos { get; set; }
     public decimal Total { get; set; }

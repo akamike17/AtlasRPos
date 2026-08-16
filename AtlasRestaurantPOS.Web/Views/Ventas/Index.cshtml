@@ -62,6 +62,7 @@
                         <strong>Folio: <span id="folioComanda"></span></strong>
                         <span id="badgeEstado" class="badge bg-success">ABIERTA</span>
                     </div>
+                    <div id="mesaComanda" class="text-muted small mb-2" style="display:none;"></div>
                     <div class="table-responsive">
                         <table class="table table-sm table-striped">
                             <thead>
@@ -143,9 +144,34 @@
 <script>
     var csrf = document.querySelector('input[name="__RequestVerificationToken"]').value;
     var estado = null;
+    var idComandaInicial = @(Model.IdComandaInicial?.ToString() ?? "null");
 
     function fmt(n) {
         return Number(n).toFixed(2);
+    }
+
+    function cargarComanda(idComanda) {
+        fetch('/Ventas/Estado?idComanda=' + idComanda, {
+            headers: {
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        }).then(function (r) {
+            if (r.status === 401 || r.status === 403) {
+                mostrarToast('Sesión no autorizada.', 'error');
+                return null;
+            }
+            return r.json();
+        }).then(function (d) {
+            if (d && d.ok) {
+                estado = d.estado;
+                render();
+            } else if (d) {
+                mostrarToast(d.mensaje || 'No se pudo cargar la comanda.', 'error');
+            }
+        }).catch(function () {
+            mostrarToast('No se pudo cargar la comanda. Inténtalo de nuevo.', 'error');
+        });
     }
 
     function postJson(url, body) {
@@ -173,7 +199,7 @@
     function nuevaComanda() {
         postJson('/Ventas/NuevaComanda', {}).then(function (d) {
             if (d && d.ok) {
-                estado = { idComanda: d.idComanda, folio: d.folio, estado: 'ABIERTA', subtotal: 0, impuestos: 0, total: 0, saldo: 0, comandaCerrada: false, partidas: [], pagos: [] };
+                estado = { idComanda: d.idComanda, folio: d.folio, estado: 'ABIERTA', nombreMesa: null, subtotal: 0, impuestos: 0, total: 0, saldo: 0, comandaCerrada: false, partidas: [], pagos: [] };
                 render();
             } else if (d) {
                 mostrarToast(d.mensaje || 'Error al crear comanda.', 'error');
@@ -243,6 +269,14 @@
         document.getElementById('lblSubtotal').textContent = fmt(estado.subtotal);
         document.getElementById('lblImpuestos').textContent = fmt(estado.impuestos);
         document.getElementById('lblTotal').textContent = fmt(estado.total);
+
+        var mesaComanda = document.getElementById('mesaComanda');
+        if (estado.nombreMesa) {
+            mesaComanda.textContent = 'Mesa: ' + estado.nombreMesa;
+            mesaComanda.style.display = '';
+        } else {
+            mesaComanda.style.display = 'none';
+        }
 
         var badge = document.getElementById('badgeEstado');
         var btnCobrar = document.getElementById('btnCobrar');
@@ -346,5 +380,8 @@
 
     document.addEventListener('DOMContentLoaded', function () {
         cambiarMetodo();
+        if (idComandaInicial) {
+            cargarComanda(idComandaInicial);
+        }
     });
 </script>

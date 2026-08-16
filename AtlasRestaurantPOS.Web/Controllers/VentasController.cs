@@ -5,6 +5,7 @@ using AtlasRestaurantPOS.Web.Data;
 using AtlasRestaurantPOS.Web.Models;
 using AtlasRestaurantPOS.Web.Models.ViewModels;
 using AtlasRestaurantPOS.Web.Services.Auditoria;
+using AtlasRestaurantPOS.Web.Services.Comanda;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -16,22 +17,22 @@ public class VentasController : Controller
 {
     private const string ClaimIdCaja = "IdCaja";
     private const string ClaimIdSesionCaja = "IdSesionCaja";
-    private const string TipoDocumentoComanda = "COMANDA";
-    private const int LongitudFolioPredeterminada = 6;
 
     private readonly AtlasRestaurantDbContext _db;
     private readonly IAuditoriaService _auditoria;
+    private readonly IFolioComandaService _folioComanda;
     private readonly ILogger<VentasController> _logger;
 
-    public VentasController(AtlasRestaurantDbContext db, IAuditoriaService auditoria, ILogger<VentasController> logger)
+    public VentasController(AtlasRestaurantDbContext db, IAuditoriaService auditoria, IFolioComandaService folioComanda, ILogger<VentasController> logger)
     {
         _db = db;
         _auditoria = auditoria;
+        _folioComanda = folioComanda;
         _logger = logger;
     }
 
     [HttpGet]
-    public async Task<IActionResult> Index()
+    public async Task<IActionResult> Index(long? idComanda = null)
     {
         var (idUsuario, idCaja, idSesion) = ObtenerContexto();
         if (idUsuario is null || idCaja is null || idSesion is null)
@@ -102,6 +103,24 @@ public class VentasController : Controller
             MetodosPago = metodos
         };
 
+        if (idComanda.HasValue)
+        {
+            var comandaValida = await _db.Comandas
+                .AsNoTracking()
+                .AnyAsync(c =>
+                    c.IdComanda == idComanda.Value &&
+                    c.IdSucursal == idSucursal &&
+                    c.IdCaja == idCaja &&
+                    c.IdSesionCaja == idSesion &&
+                    c.IdUsuario == idUsuario.Value &&
+                    c.Estado == EstadosComanda.ABIERTA);
+
+            if (comandaValida)
+            {
+                modelo.IdComandaInicial = idComanda.Value;
+            }
+        }
+
         return View(modelo);
     }
 
@@ -132,7 +151,7 @@ public class VentasController : Controller
                     return JsonError("La sesión de caja no está disponible.");
                 }
 
-                var folio = await GenerarFolioAsync(idSucursal.Value);
+                var folio = await _folioComanda.GenerarAsync(idSucursal.Value);
 
                 var comanda = new Comanda
                 {
@@ -181,6 +200,39 @@ public class VentasController : Controller
             _logger.LogError(ex, "Error al crear comanda.");
             return JsonError("Ocurrió un error al crear la comanda.");
         }
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> Estado(long idComanda)
+    {
+        var (idUsuario, idCaja, idSesion) = ObtenerContexto();
+        if (idUsuario is null || idCaja is null || idSesion is null)
+        {
+            return JsonError("No tienes una sesión de caja activa.");
+        }
+
+        var idSucursal = ObtenerClaimInt("IdSucursal");
+        if (idSucursal is null)
+        {
+            return JsonError("No se pudo identificar tu sucursal.");
+        }
+
+        var valida = await _db.Comandas
+            .AsNoTracking()
+            .AnyAsync(c =>
+                c.IdComanda == idComanda &&
+                c.IdSucursal == idSucursal &&
+                c.IdCaja == idCaja &&
+                c.IdSesionCaja == idSesion &&
+                c.IdUsuario == idUsuario.Value);
+
+        if (!valida)
+        {
+            return JsonError("La comanda no existe o no pertenece a tu sesión.");
+        }
+
+        var estado = await ConstruirEstadoAsync(idComanda, idCaja.Value, idSesion.Value);
+        return Json(new { ok = true, estado });
     }
 
     [HttpPost]
@@ -578,6 +630,27 @@ public class VentasController : Controller
                     comanda.Estado = EstadosComanda.CERRADA;
                     comanda.FechaCierre = DateTime.Now;
                     await _db.SaveChangesAsync();
+
+                    if (comanda.IdMesa is not null)
+                    {
+                        var mesa = await _db.Mesas
+                            .FromSqlRaw("SELECT * FROM Mesas WHERE IdMesa = {0} FOR UPDATE", comanda.IdMesa.Value)
+                            .FirstOrDefaultAsync();
+
+                        if (mesa is not null)
+                        {
+                            var estadoAnteriorMesa = mesa.Estado;
+                            mesa.Estado = EstadosMesa.DISPONIBLE;
+                            await _db.SaveChangesAsync();
+
+                            await _auditoria.RegistrarAsync(
+                                "Mesa",
+                                mesa.IdMesa.ToString(),
+                                "LIBERAR_MESA",
+                                new { mesa.IdMesa, comanda.IdComanda, comanda.Folio, EstadoAnterior = estadoAnteriorMesa },
+                                new { mesa.IdMesa, comanda.IdComanda, comanda.Folio, EstadoNuevo = mesa.Estado });
+                        }
+                    }
                 }
 
                 await _auditoria.RegistrarAsync(
@@ -684,43 +757,6 @@ public class VentasController : Controller
         return comanda;
     }
 
-    private async Task<string> GenerarFolioAsync(int idSucursal)
-    {
-        var sucursal = await _db.Sucursales
-            .FromSqlRaw("SELECT * FROM Sucursales WHERE IdSucursal = {0} FOR UPDATE", idSucursal)
-            .FirstOrDefaultAsync();
-
-        if (sucursal is null)
-        {
-            throw new InvalidOperationException($"La sucursal {idSucursal} no existe.");
-        }
-
-        var sec = await _db.FoliosSecuencia
-            .FromSqlRaw("SELECT * FROM FoliosSecuencia WHERE IdSucursal = {0} AND TipoDocumento = {1} FOR UPDATE", idSucursal, TipoDocumentoComanda)
-            .FirstOrDefaultAsync();
-
-        if (sec is null)
-        {
-            sec = new FolioSecuencia
-            {
-                IdSucursal = idSucursal,
-                TipoDocumento = TipoDocumentoComanda,
-                UltimoNumero = 0,
-                Longitud = LongitudFolioPredeterminada,
-                FechaModificacion = DateTime.Now
-            };
-            _db.FoliosSecuencia.Add(sec);
-            await _db.SaveChangesAsync();
-        }
-
-        sec.UltimoNumero += 1;
-        sec.FechaModificacion = DateTime.Now;
-        await _db.SaveChangesAsync();
-
-        var patron = new string('0', sec.Longitud);
-        return (sec.Prefijo ?? string.Empty) + sec.UltimoNumero.ToString(patron);
-    }
-
     private async Task RecalcularComandaAsync(long idComanda)
     {
         var comanda = await _db.Comandas
@@ -782,6 +818,7 @@ public class VentasController : Controller
                 IdComanda = c.IdComanda,
                 Folio = c.Folio ?? string.Empty,
                 Estado = c.Estado,
+                NombreMesa = c.Mesa != null ? c.Mesa.Nombre : null,
                 Subtotal = c.Subtotal,
                 Impuestos = c.Impuestos,
                 Total = c.Total,
