@@ -39,7 +39,7 @@ public class ExistenciasController : Controller
                 .Include(e => e.Sucursal)
                 .Include(e => e.Insumo)
                     .ThenInclude(i => i.UnidadMedida)
-                .Where(e => e.Insumo.IdEmpresa == idEmpresa.Value);
+                .Where(e => e.Insumo.IdEmpresa == idEmpresa.Value && e.Sucursal.IdEmpresa == idEmpresa.Value);
 
             if (idSucursal is not null && idSucursal > 0)
                 query = query.Where(e => e.IdSucursal == idSucursal);
@@ -104,7 +104,7 @@ public class ExistenciasController : Controller
             .Include(x => x.Sucursal)
             .Include(x => x.Insumo)
                 .ThenInclude(i => i.UnidadMedida)
-            .FirstOrDefaultAsync(x => x.IdSucursal == idSucursal && x.IdInsumo == idInsumo && x.Insumo.IdEmpresa == idEmpresa.Value);
+            .FirstOrDefaultAsync(x => x.IdSucursal == idSucursal && x.IdInsumo == idInsumo && x.Insumo.IdEmpresa == idEmpresa.Value && x.Sucursal.IdEmpresa == idEmpresa.Value);
 
         if (e is null)
         {

@@ -244,7 +244,7 @@ public class UnidadesMedidaController : Controller
             }
 
             var tieneInsumosActivos = await _db.Insumos
-                .AnyAsync(i => i.IdUnidadMedida == id && i.Activo);
+                .AnyAsync(i => i.IdUnidadMedida == id && i.IdEmpresa == idEmpresa.Value && i.Activo);
 
             if (tieneInsumosActivos)
             {

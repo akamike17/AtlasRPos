@@ -419,6 +419,43 @@ Deuda técnica NO bloqueante (no es fallo de Fase 9):
 - Recuperación administrativa de comandas huérfanas asociadas a sesiones de caja cerradas: una ejecución concurrente interrumpida durante las pruebas dejó una Comanda ABIERTA asociada a una SesionCaja posteriormente CERRADA; sin flujo funcional normal para resolverla por ownership; durante la batería F9 se realizó una limpieza puntual controlada (fuera del repo) marcando la comanda de prueba como CANCELADA y liberando su Mesa. No diseñar ni implementar la solución todavía.
 - Se mantiene separada la incidencia NO bloqueante del password del admin registrada en Fase 8 (no se toca).
 
+### Fase 10 — Inventario, Insumos, Recetas, Existencias, Códigos y Etiquetas
+
+Estado:
+IMPLEMENTADA Y VERIFICADA
+
+Implementado físicamente:
+
+- servicios IInventarioService, IIdentificacionService e IEtiquetaService;
+- movimientos transaccionales con FOR UPDATE, UPSERT seguro para existencia ausente, stock no negativo y auditoría;
+- entradas, ajustes, mermas y devolución física explícita;
+- escaneo server-side de producto en Ventas e insumo en Inventario;
+- generación concurrente de códigos internos por empresa con secuencia persistente;
+- previsualización HTML de etiquetas para Producto/Insumo, sin impresión física;
+- campos de código/código de barras y generación automática en UI de Productos e Insumos;
+- auditoría de recetas con eventos agregar/modificar/quitar;
+- menú administrativo para Recetas, Existencias y Movimientos;
+- aislamiento por empresa/sucursal y validación de sesión/caja en Ventas conservados.
+
+Persistencia:
+
+- no se agregó una migración nueva; el esquema de Fase 10 existente fue suficiente;
+- upgrade verificado desde 20260816081324_AgregarInventarioInsumos hasta la migración más reciente;
+- fresh verificado en base MySQL temporal.
+
+Verificación ejecutada:
+
+- build Release: 0 warnings / 0 errors;
+- MySQL real: 2 PASS / 0 FAIL;
+- cobertura: tenant isolation, colisión de códigos entre empresas, escaneo POS, movimiento de entrada sobre existencia ausente, merma, secuencia concurrente, multicaja, consumo al cierre, pago parcial existente, rollback por stock insuficiente, devolución financiera sin reposición física y trazabilidad caja/sesión;
+- Playwright: login renderizado y Fetch sin sesión devuelve 401;
+- cleanup: servidor propio detenido, PID finalizado, puerto 5101 libre y artefactos temporales eliminados.
+
+Limitaciones externas:
+
+- impresión física, lector y generación gráfica estándar de códigos de barras quedan EXTERNAL; la UI entrega código y previsualización de datos sin instalar SDK/hardware;
+- no se ejecutó login autenticado de navegador porque no existe una credencial E2E de aplicación autorizada en esta tarea; los flujos autenticados se verificaron en MySQL/controladores.
+
 ## Módulos todavía sin administración completa
 
 Modelos presentes sin CRUD/UI administrativo completo:
@@ -429,22 +466,21 @@ Modelos presentes sin CRUD/UI administrativo completo:
 
 ## Próximo objetivo funcional
 
-Con Fase 9 (Cancelaciones y Devoluciones) cerrada:
+Con Fase 10 implementada y verificada, los siguientes módulos siguen fuera del alcance de esta fase:
 
-- Fase 10: pendiente de definir por el usuario/ChatGPT. NO está implementada.
-  Candidatos históricos (no comprometidos): cocina/KDS, inventario/recetas,
-  periféricos reales, integraciones/APIs, reportes, permisos/configuración avanzada,
-  pruebas end-to-end finales.
+- ConfiguracionPos;
+- Dispositivo;
+- IntegracionExterna;
+- cocina/KDS, integraciones reales y reportes adicionales.
 
 ## Estado técnico actual verificable
 
 - Fuente temporal de F6 eliminada de Program.cs.
-- Program.cs limpio.
-- Última DLL física detectada:
-  `AtlasRestaurantPOS.Web\bin\Debug\net8.0\AtlasRestaurantPOS.Web.dll`
-- No afirmar build limpio actual sin ejecutar `dotnet build`.
-- No afirmar estado actual de MySQL sin consultar DB.
-- No afirmar servidor activo: las últimas verificaciones disponibles indican servidor de prueba detenido.
+- Build Release ejecutado: 0 warnings / 0 errors.
+- MySQL real ejecutado: 2 pruebas PASS / 0 FAIL, con bases temporales fresh y upgrade; cleanup aplicado.
+- Playwright ejecutado: login renderizado y Fetch sin sesión con 401.
+- Servidor E2E propio detenido; PID finalizado; puerto 5101 libre.
+- No hay servidor de prueba activo al cerrar la fase.
 
 ## Reglas para actualizar este archivo
 

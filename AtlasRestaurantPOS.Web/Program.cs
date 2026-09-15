@@ -6,6 +6,9 @@ using AtlasRestaurantPOS.Web.Services.Auditoria;
 using AtlasRestaurantPOS.Web.Services.Bootstrap;
 using AtlasRestaurantPOS.Web.Services.CodigoInterno;
 using AtlasRestaurantPOS.Web.Services.Comanda;
+using AtlasRestaurantPOS.Web.Services.Etiquetas;
+using AtlasRestaurantPOS.Web.Services.Identificacion;
+using AtlasRestaurantPOS.Web.Services.Inventario;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -26,6 +29,9 @@ builder.Services.AddScoped<IInitialSetupService, InitialSetupService>();
 builder.Services.AddScoped<IAuditoriaService, AuditoriaService>();
 builder.Services.AddScoped<IFolioComandaService, FolioComandaService>();
 builder.Services.AddScoped<ICodigoInternoService, CodigoInternoService>();
+builder.Services.AddScoped<IInventarioService, InventarioService>();
+builder.Services.AddScoped<IIdentificacionService, IdentificacionService>();
+builder.Services.AddScoped<IEtiquetaService, EtiquetaService>();
 builder.Services.AddHttpContextAccessor();
 
 builder.Services.AddAuthentication("AtlasRestaurantCookie")

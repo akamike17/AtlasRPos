@@ -41,6 +41,14 @@ public class AgregarProductoViewModel
     public string? Notas { get; set; }
 }
 
+public class AgregarProductoCodigoViewModel
+{
+    public long IdComanda { get; set; }
+    public string Codigo { get; set; } = string.Empty;
+    public decimal Cantidad { get; set; } = 1m;
+    public string? Notas { get; set; }
+}
+
 public class ModificarCantidadViewModel
 {
     public long IdComanda { get; set; }

@@ -6,9 +6,14 @@ using AtlasRestaurantPOS.Web.Models;
 using AtlasRestaurantPOS.Web.Models.ViewModels;
 using AtlasRestaurantPOS.Web.Services.Auditoria;
 using AtlasRestaurantPOS.Web.Services.Comanda;
+using AtlasRestaurantPOS.Web.Services.CodigoInterno;
+using AtlasRestaurantPOS.Web.Services.Identificacion;
+using AtlasRestaurantPOS.Web.Services.Inventario;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.Logging.Abstractions;
 using MySqlConnector;
 using Xunit;
@@ -158,6 +163,51 @@ public sealed class CierreQuirurgicoMySqlTests
             Assert.Equal(2, await codeContext.Productos.CountAsync(p => p.Codigo == "PIZZA-001"));
         }
 
+        await using (var identificationContext = _fixture.CreateContext())
+        {
+            var identification = new IdentificacionService(identificationContext);
+            var producto = await identification.BuscarProductoAsync(1, "750001");
+            Assert.NotNull(producto);
+            Assert.Equal(11, producto!.IdProducto);
+            var mismoCodigoOtraEmpresa = await identification.BuscarProductoAsync(2, "750001");
+            Assert.NotNull(mismoCodigoOtraEmpresa);
+            Assert.Equal(12, mismoCodigoOtraEmpresa!.IdProducto);
+            Assert.Null(await identification.BuscarProductoAsync(2, "750002"));
+            var insumo = await identification.BuscarInsumoAsync(1, "INS-001");
+            Assert.NotNull(insumo);
+            Assert.Equal(501, insumo!.IdInsumo);
+            Assert.Null(await identification.BuscarInsumoAsync(2, "INS-001"));
+        }
+
+        await using (var scanContext = _fixture.CreateContext())
+        {
+            var controller = CreateVentasController(scanContext, 1001, 1, 10, 101, 10001);
+            var result = await controller.AgregarProductoPorCodigo(new AgregarProductoCodigoViewModel
+            {
+                IdComanda = 1004,
+                Codigo = "750001",
+                Cantidad = 1m
+            }, CancellationToken.None);
+            Assert.True(ReadBool(result, "ok"));
+        }
+
+        await using (var inventoryContext = _fixture.CreateContext())
+        {
+            var httpContext = CreateHttpContext(1001, 1, 10, null, null);
+            var accessor = new HttpContextAccessor { HttpContext = httpContext };
+            var inventory = new InventarioService(inventoryContext, new AuditoriaService(inventoryContext, accessor));
+            var entrada = await inventory.RegistrarMovimientoAsync(1, 10, 503, 1001, TiposMovimientoInventario.ENTRADA, 12m, "Compra inicial", 2.5m);
+            Assert.True(entrada.Ok, entrada.Mensaje);
+            var merma = await inventory.RegistrarMovimientoAsync(1, 10, 503, 1001, TiposMovimientoInventario.MERMA, 2m, "Producto dañado");
+            Assert.True(merma.Ok, merma.Mensaje);
+        }
+
+        var generatedCodes = await Task.WhenAll(
+            Task.Run(async () => { await using var db = _fixture.CreateContext(); return await new CodigoInternoService(db).GenerarAsync(1, TiposEntidadCodigo.PRODUCTO); }),
+            Task.Run(async () => { await using var db = _fixture.CreateContext(); return await new CodigoInternoService(db).GenerarAsync(1, TiposEntidadCodigo.PRODUCTO); }));
+        Assert.Equal(2, generatedCodes.Distinct(StringComparer.Ordinal).Count());
+        Assert.All(generatedCodes, code => Assert.Matches(@"^\d{6}$", code));
+
         using var barrier = new Barrier(2);
         var attempts = await Task.WhenAll(
             Task.Run(() => CloseAsync(barrier, 1001, 101, 10001, 1001)),
@@ -231,6 +281,11 @@ public sealed class CierreQuirurgicoMySqlTests
                 .Where(x => x.IdSucursal == 10 && x.IdInsumo == 502)
                 .Select(x => x.CantidadActual)
                 .SingleAsync());
+            Assert.Equal(10m, await finalContext.ExistenciasInsumo
+                .Where(x => x.IdSucursal == 10 && x.IdInsumo == 503)
+                .Select(x => x.CantidadActual)
+                .SingleAsync());
+            Assert.Equal(2, await finalContext.MovimientosInventario.CountAsync(x => x.IdInsumo == 503));
 
             Assert.True(await finalContext.Pagos
                 .Where(x => x.IdComanda == 1001 || x.IdComanda == 1002)
@@ -256,6 +311,54 @@ public sealed class CierreQuirurgicoMySqlTests
                 .Where(x => x.IdMesa == 901)
                 .Select(x => x.Estado)
                 .SingleAsync());
+        }
+    }
+
+    [Fact]
+    public async Task Migraciones_fresh_y_upgrade_completan_en_MySql_real()
+    {
+        var configured = Environment.GetEnvironmentVariable("ATLAS_TEST_CONNECTION_STRING");
+        Assert.False(string.IsNullOrWhiteSpace(configured));
+
+        var databaseName = "atlas_rpos_upgrade_" + Guid.NewGuid().ToString("N");
+        var adminBuilder = new MySqlConnectionStringBuilder(configured!)
+        {
+            Database = string.Empty
+        };
+
+        try
+        {
+            await using (var admin = new MySqlConnection(adminBuilder.ConnectionString))
+            {
+                await admin.OpenAsync();
+                await using var command = admin.CreateCommand();
+                command.CommandText = $"CREATE DATABASE {databaseName} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci";
+                await command.ExecuteNonQueryAsync();
+            }
+
+            adminBuilder.Database = databaseName;
+            var options = new DbContextOptionsBuilder<AtlasRestaurantDbContext>()
+                .UseMySql(adminBuilder.ConnectionString, ServerVersion.AutoDetect(adminBuilder.ConnectionString))
+                .Options;
+
+            await using (var upgradeContext = new AtlasRestaurantDbContext(options))
+            {
+                await upgradeContext.Database.GetService<IMigrator>().MigrateAsync("20260816081324_AgregarInventarioInsumos");
+                Assert.Equal("20260816081324_AgregarInventarioInsumos", upgradeContext.Database.GetAppliedMigrations().Last());
+                await upgradeContext.Database.MigrateAsync();
+                Assert.Empty(upgradeContext.Database.GetPendingMigrations());
+            }
+        }
+        finally
+        {
+            await using var admin = new MySqlConnection(new MySqlConnectionStringBuilder(configured!)
+            {
+                Database = string.Empty
+            }.ConnectionString);
+            await admin.OpenAsync();
+            await using var command = admin.CreateCommand();
+            command.CommandText = $"DROP DATABASE IF EXISTS {databaseName}";
+            await command.ExecuteNonQueryAsync();
         }
     }
 
@@ -300,6 +403,7 @@ public sealed class CierreQuirurgicoMySqlTests
             new UnidadMedida { IdUnidadMedida = 401, IdEmpresa = 1, Codigo = "KG", Nombre = "Kilogramo", Activo = true, FechaCreacion = now },
             new Insumo { IdInsumo = 501, IdEmpresa = 1, IdUnidadMedida = 401, Codigo = "INS-001", Nombre = "Harina", CostoReferencia = 1m, StockMinimo = 0m, Activo = true, FechaCreacion = now },
             new Insumo { IdInsumo = 502, IdEmpresa = 1, IdUnidadMedida = 401, Codigo = "INS-002", Nombre = "Salsa", CostoReferencia = 1m, StockMinimo = 0m, Activo = true, FechaCreacion = now },
+            new Insumo { IdInsumo = 503, IdEmpresa = 1, IdUnidadMedida = 401, Codigo = null, Nombre = "Queso sin código", CostoReferencia = 1m, StockMinimo = 0m, Activo = true, FechaCreacion = now },
             new CategoriaProducto { IdCategoriaProducto = 301, IdEmpresa = 1, Nombre = "Comida A", Activo = true },
             new CategoriaProducto { IdCategoriaProducto = 302, IdEmpresa = 2, Nombre = "Comida B", Activo = true },
             new Producto { IdProducto = 11, IdEmpresa = 1, IdCategoriaProducto = 301, Nombre = "Pizza A", Precio = 10m, Codigo = "PIZZA-001", CodigoBarras = "750001", Activo = true, FechaCreacion = now },
@@ -316,6 +420,7 @@ public sealed class CierreQuirurgicoMySqlTests
             new Comanda { IdComanda = 1001, IdSucursal = 10, IdCaja = 101, IdSesionCaja = 10001, IdMesa = null, IdUsuario = 1001, FechaApertura = now, Estado = EstadosComanda.ABIERTA, Folio = "A-1001", Subtotal = 10m, Total = 10m },
             new Comanda { IdComanda = 1002, IdSucursal = 10, IdCaja = 102, IdSesionCaja = 10002, IdMesa = null, IdUsuario = 1002, FechaApertura = now, Estado = EstadosComanda.ABIERTA, Folio = "A-1002", Subtotal = 10m, Total = 10m },
             new Comanda { IdComanda = 1003, IdSucursal = 10, IdCaja = 101, IdSesionCaja = 10001, IdMesa = 901, IdUsuario = 1001, FechaApertura = now, Estado = EstadosComanda.ABIERTA, Folio = "A-1003", Subtotal = 10m, Total = 10m },
+            new Comanda { IdComanda = 1004, IdSucursal = 10, IdCaja = 101, IdSesionCaja = 10001, IdMesa = null, IdUsuario = 1001, FechaApertura = now, Estado = EstadosComanda.ABIERTA, Folio = "A-1004", Subtotal = 0m, Total = 0m },
             new ComandaDetalle { IdComandaDetalle = 2001, IdComanda = 1001, IdProducto = 11, Cantidad = 1m, PrecioUnitario = 10m, Importe = 10m },
             new ComandaDetalle { IdComandaDetalle = 2002, IdComanda = 1002, IdProducto = 11, Cantidad = 1m, PrecioUnitario = 10m, Importe = 10m },
             new ComandaDetalle { IdComandaDetalle = 2003, IdComanda = 1003, IdProducto = 13, Cantidad = 1m, PrecioUnitario = 10m, Importe = 10m });
@@ -330,7 +435,8 @@ public sealed class CierreQuirurgicoMySqlTests
         var controller = new ProductosController(
             db,
             new AuditoriaService(db, accessor),
-            NullLogger<ProductosController>.Instance);
+            NullLogger<ProductosController>.Instance,
+            new CodigoInternoService(db));
         controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
         return controller;
     }
@@ -343,7 +449,8 @@ public sealed class CierreQuirurgicoMySqlTests
             db,
             new AuditoriaService(db, accessor),
             new TestFolioComandaService(),
-            NullLogger<VentasController>.Instance);
+            NullLogger<VentasController>.Instance,
+            new IdentificacionService(db));
         controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
         return controller;
     }

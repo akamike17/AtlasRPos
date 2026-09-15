@@ -6,6 +6,17 @@
 <h1 class="mb-3">Punto de Venta</h1>
 <p class="text-muted">Caja @Model.Codigo - @Model.Nombre (Sucursal: @Model.Sucursal)</p>
 
+<div class="card border-primary mb-3">
+    <div class="card-body py-2">
+        <label for="codigoEscaneo" class="form-label mb-1">Escanear producto</label>
+        <div class="input-group">
+            <input type="text" id="codigoEscaneo" class="form-control" maxlength="50" autocomplete="off" placeholder="Código interno o código de barras" />
+            <button type="button" class="btn btn-outline-primary" onclick="escanearProducto()">Agregar</button>
+        </div>
+        <div class="form-text">El lector USB puede enviar Enter; el servidor valida empresa, producto y sesión.</div>
+    </div>
+</div>
+
 <div class="row">
     <div class="col-lg-7 mb-3">
         <div class="card">
@@ -235,6 +246,17 @@
         postJson('/Ventas/AgregarProducto', { idComanda: estado.idComanda, idProducto: idProducto, cantidad: 1, notas: '' }).then(function (d) {
             if (d && d.ok) { estado = d.estado; render(); }
             else if (d) { mostrarToast(d.mensaje || 'Error al agregar.', 'error'); }
+        });
+    }
+
+    function escanearProducto() {
+        var input = document.getElementById('codigoEscaneo');
+        var codigo = input.value.trim();
+        if (!codigo) return;
+        if (!estado) { mostrarToast('Primero crea una comanda.', 'error'); return; }
+        postJson('/Ventas/AgregarProductoPorCodigo', { idComanda: estado.idComanda, codigo: codigo, cantidad: 1, notas: '' }).then(function (d) {
+            if (d && d.ok) { estado = d.estado; render(); input.value = ''; input.focus(); }
+            else if (d) { mostrarToast(d.mensaje || 'Código no encontrado.', 'error'); input.select(); }
         });
     }
 

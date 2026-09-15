@@ -98,6 +98,11 @@
                 </div>
                 <div class="modal-body">
                     <div class="mb-3">
+                        <label class="form-label" for="movCodigoInsumo">Escanear insumo</label>
+                        <input type="text" id="movCodigoInsumo" class="form-control" maxlength="50" autocomplete="off" placeholder="Código interno o código de barras" />
+                        <div class="form-text">Presiona Enter para localizarlo en tu empresa.</div>
+                    </div>
+                    <div class="mb-3">
                         <label class="form-label" for="movInsumo">Insumo *</label>
                         <select id="movInsumo" class="form-select" required></select>
                     </div>
@@ -117,6 +122,10 @@
                             <input type="number" id="movCantidad" class="form-control" step="0.001" min="0.001" required />
                             <span class="input-group-text" id="movUnidadMedida">-</span>
                         </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="movCosto">Costo unitario (opcional)</label>
+                        <input type="number" id="movCosto" class="form-control" step="0.001" min="0" />
                     </div>
                     <div class="mb-3">
                         <label class="form-label" for="movConcepto">Concepto / Motivo *</label>
@@ -151,6 +160,8 @@
     const modalMovimiento = new bootstrap.Modal(modalMovimientoEl);
     const formMovimiento = document.getElementById('formMovimiento');
     const selectMovInsumo = document.getElementById('movInsumo');
+    const inputMovCodigo = document.getElementById('movCodigoInsumo');
+    const inputMovCosto = document.getElementById('movCosto');
     const selectMovTipo = document.getElementById('movTipo');
     const inputMovCantidad = document.getElementById('movCantidad');
     const inputMovConcepto = document.getElementById('movConcepto');
@@ -236,6 +247,25 @@
         }
     }
 
+    inputMovCodigo.addEventListener('keydown', async (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        const codigo = inputMovCodigo.value.trim();
+        if (!codigo) return;
+        try {
+            const res = await fetch('@Url.Action("IdentificarInsumo", "MovimientosInventario")?codigo=' + encodeURIComponent(codigo), { headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' } });
+            const data = await res.json();
+            if (data.ok && data.insumo) {
+                selectMovInsumo.value = data.insumo.idInsumo;
+                selectMovInsumo.dispatchEvent(new Event('change'));
+                inputMovCodigo.value = '';
+                inputMovCantidad.focus();
+            } else {
+                window.mostrarToast?.('Aviso', data.mensaje || 'Insumo no encontrado.', 'warning');
+            }
+        } catch { window.mostrarToast?.('Error', 'No se pudo consultar el código.', 'danger'); }
+    });
+
     selectMovInsumo.addEventListener('change', () => {
         const id = parseInt(selectMovInsumo.value, 10);
         const insumo = catalogoInsumos.find(i => i.idInsumo === id);
@@ -312,6 +342,7 @@
         const tipo = selectMovTipo.value;
         const cantidad = parseFloat(inputMovCantidad.value);
         const concepto = inputMovConcepto.value.trim();
+        const costo = inputMovCosto.value === '' ? null : parseFloat(inputMovCosto.value);
 
         if (!idInsumo || idInsumo <= 0) {
             window.mostrarToast?.('Validación', 'Selecciona un insumo.', 'warning');
@@ -325,6 +356,10 @@
             window.mostrarToast?.('Validación', 'Ingresa una cantidad mayor a cero.', 'warning');
             return;
         }
+        if (costo !== null && (isNaN(costo) || costo < 0)) {
+            window.mostrarToast?.('Validación', 'El costo debe ser cero o mayor.', 'warning');
+            return;
+        }
         if (!concepto || concepto.length < 3) {
             window.mostrarToast?.('Validación', 'El motivo / concepto es obligatorio (mínimo 3 caracteres).', 'warning');
             return;
@@ -334,6 +369,7 @@
             idInsumo,
             tipo,
             cantidad,
+            costoUnitario: costo,
             concepto
         };
 

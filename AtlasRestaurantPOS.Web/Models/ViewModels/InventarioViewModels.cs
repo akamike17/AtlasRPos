@@ -24,5 +24,6 @@ public class MovimientoForm
     public string Tipo { get; set; } = string.Empty; // ENTRADA, AJUSTE_POSITIVO, AJUSTE_NEGATIVO, MERMA, DEVOLUCION_INVENTARIO
     public int IdInsumo { get; set; }
     public decimal Cantidad { get; set; }
+    public decimal? CostoUnitario { get; set; }
     public string? Concepto { get; set; }
 }

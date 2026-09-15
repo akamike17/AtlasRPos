@@ -6,6 +6,7 @@ using AtlasRestaurantPOS.Web.Models;
 using AtlasRestaurantPOS.Web.Models.ViewModels;
 using AtlasRestaurantPOS.Web.Services.Auditoria;
 using AtlasRestaurantPOS.Web.Services.Comanda;
+using AtlasRestaurantPOS.Web.Services.Identificacion;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -22,13 +23,15 @@ public class VentasController : Controller
     private readonly IAuditoriaService _auditoria;
     private readonly IFolioComandaService _folioComanda;
     private readonly ILogger<VentasController> _logger;
+    private readonly IIdentificacionService _identificacion;
 
-    public VentasController(AtlasRestaurantDbContext db, IAuditoriaService auditoria, IFolioComandaService folioComanda, ILogger<VentasController> logger)
+    public VentasController(AtlasRestaurantDbContext db, IAuditoriaService auditoria, IFolioComandaService folioComanda, ILogger<VentasController> logger, IIdentificacionService identificacion)
     {
         _db = db;
         _auditoria = auditoria;
         _folioComanda = folioComanda;
         _logger = logger;
+        _identificacion = identificacion;
     }
 
     [HttpGet]
@@ -233,6 +236,29 @@ public class VentasController : Controller
 
         var estado = await ConstruirEstadoAsync(idComanda, idCaja.Value, idSesion.Value);
         return Json(new { ok = true, estado });
+    }
+
+    [HttpPost]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> AgregarProductoPorCodigo([FromBody] AgregarProductoCodigoViewModel modelo, CancellationToken cancellationToken)
+    {
+        var idEmpresa = ObtenerClaimInt("IdEmpresa");
+        if (idEmpresa is null) return JsonError("No se pudo identificar tu empresa.");
+        if (modelo is null || string.IsNullOrWhiteSpace(modelo.Codigo)) return JsonError("El código es obligatorio.");
+        if (modelo.Cantidad <= 0) return JsonError("La cantidad debe ser mayor a cero.");
+
+        var producto = await _identificacion.BuscarProductoAsync(idEmpresa.Value, modelo.Codigo, cancellationToken);
+        if (producto is null) return JsonError("No existe un producto activo con ese código.");
+
+        // Reutiliza la operación normal para conservar validación de sesión, stock proyectado,
+        // precio/impuestos server-side y auditoría de la comanda.
+        return await AgregarProducto(new AgregarProductoViewModel
+        {
+            IdComanda = modelo.IdComanda,
+            IdProducto = producto.IdProducto,
+            Cantidad = modelo.Cantidad,
+            Notas = modelo.Notas
+        });
     }
 
     [HttpPost]

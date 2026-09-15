@@ -158,6 +158,7 @@
                 '<td>' + badge + '</td>' +
                 '<td class="text-end text-nowrap">' +
                 '<button type="button" class="btn btn-sm btn-outline-primary me-1" onclick="window.editar(' + i.idInsumo + ')">Editar</button>' +
+                '<button type="button" class="btn btn-sm btn-outline-secondary me-1" onclick="window.verEtiqueta(' + i.idInsumo + ')">Etiqueta</button>' +
                 botonEstatus +
                 '</td>';
             tbody.appendChild(tr);
@@ -276,8 +277,13 @@
         }
     }
 
+    async function verEtiqueta(id) {
+        window.open('/Etiquetas/PreviewInsumo?id=' + id, '_blank', 'noopener');
+    }
+
     window.cambiarEstatus = cambiarEstatus;
     window.editar = editar;
+    window.verEtiqueta = verEtiqueta;
     window.abrirModal = abrirModal;
 
     document.getElementById('formInsumo').addEventListener('submit', function (ev) {

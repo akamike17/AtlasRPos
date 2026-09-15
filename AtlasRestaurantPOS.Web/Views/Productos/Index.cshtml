@@ -20,6 +20,8 @@
                 <th>Id</th>
                 <th>Categoría</th>
                 <th>Nombre</th>
+                <th>Código</th>
+                <th>Código de barras</th>
                 <th>Descripción</th>
                 <th>Precio</th>
                 <th>Impuestos</th>
@@ -44,6 +46,17 @@
                     <div class="mb-3">
                         <label class="form-label" for="IdCategoriaProducto">Categoría *</label>
                         <select id="IdCategoriaProducto" class="form-select"></select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="Codigo">Código</label>
+                        <div class="input-group">
+                            <input type="text" id="Codigo" class="form-control" maxlength="50" />
+                            <span class="input-group-text"><input type="checkbox" id="GenerarCodigo" class="form-check-input me-1" /> Generar</span>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="CodigoBarras">Código de barras</label>
+                        <input type="text" id="CodigoBarras" class="form-control" maxlength="50" />
                     </div>
                     <div class="mb-3">
                         <label class="form-label" for="Nombre">Nombre *</label>
@@ -123,7 +136,7 @@
         const tbody = document.getElementById('tabla-productos');
         tbody.innerHTML = '';
         if (!lista.length) {
-            tbody.innerHTML = '<tr><td colspan="8" class="text-center">Sin resultados</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="10" class="text-center">Sin resultados</td></tr>';
             return;
         }
         lista.forEach(p => {
@@ -137,6 +150,8 @@
             tr.innerHTML = '<td>' + p.idProducto + '</td>' +
                 '<td>' + escapeHtml(p.categoria) + '</td>' +
                 '<td>' + escapeHtml(p.nombre) + '</td>' +
+                '<td>' + escapeHtml(p.codigo || '') + '</td>' +
+                '<td>' + escapeHtml(p.codigoBarras || '') + '</td>' +
                 '<td>' + escapeHtml(p.descripcion || '') + '</td>' +
                 '<td>' + Number(p.precio).toFixed(2) + '</td>' +
                 '<td>' +
@@ -145,6 +160,7 @@
                 '<td>' + badge + '</td>' +
                 '<td class="text-end text-nowrap">' +
                 '<button type="button" class="btn btn-sm btn-outline-primary me-1" onclick="window.editar(' + p.idProducto + ')">Editar</button>' +
+                '<button type="button" class="btn btn-sm btn-outline-secondary me-1" onclick="window.verEtiqueta(' + p.idProducto + ')">Etiqueta</button>' +
                 botonEstatus +
                 '</td>';
             tbody.appendChild(tr);
@@ -171,6 +187,8 @@
     function abrirModal() {
         document.getElementById('formProducto').reset();
         document.getElementById('IdProducto').value = '';
+        document.getElementById('GenerarCodigo').checked = false;
+        document.getElementById('GenerarCodigo').disabled = false;
         document.getElementById('tituloModal').textContent = 'Nuevo producto';
         new bootstrap.Modal(modal).show();
     }
@@ -185,6 +203,10 @@
             if (!p) { mostrarToast('No se encontró el registro.', 'error'); return; }
             document.getElementById('IdProducto').value = p.idProducto;
             document.getElementById('IdCategoriaProducto').value = p.idCategoriaProducto;
+            document.getElementById('Codigo').value = p.codigo || '';
+            document.getElementById('CodigoBarras').value = p.codigoBarras || '';
+            document.getElementById('GenerarCodigo').checked = false;
+            document.getElementById('GenerarCodigo').disabled = true;
             document.getElementById('Nombre').value = p.nombre;
             document.getElementById('Precio').value = p.precio;
             document.getElementById('Descripcion').value = p.descripcion || '';
@@ -200,6 +222,9 @@
         const payload = {
             idProducto: id ? parseInt(id, 10) : 0,
             idCategoriaProducto: parseInt(document.getElementById('IdCategoriaProducto').value, 10) || 0,
+            codigo: document.getElementById('Codigo').value.trim(),
+            codigoBarras: document.getElementById('CodigoBarras').value.trim(),
+            generarCodigo: document.getElementById('GenerarCodigo').checked,
             nombre: document.getElementById('Nombre').value,
             descripcion: document.getElementById('Descripcion').value,
             precio: parseFloat(document.getElementById('Precio').value) || 0
@@ -345,8 +370,13 @@
         }
     }
 
+    function verEtiqueta(id) {
+        window.open('/Etiquetas/PreviewProducto?id=' + id, '_blank', 'noopener');
+    }
+
     window.cambiarEstatus = cambiarEstatus;
     window.editar = editar;
+    window.verEtiqueta = verEtiqueta;
     window.abrirModal = abrirModal;
     window.gestionarImpuestos = gestionarImpuestos;
 

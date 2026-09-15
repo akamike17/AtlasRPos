@@ -1,8 +1,8 @@
 # FASE 10 — INVENTARIO, INSUMOS, RECETAS, EXISTENCIAS, CÓDIGOS DE BARRAS Y ETIQUETAS (Especificación)
 
-> Documento de especificación de la Fase 10.
-> NO implementa nada. NO modifica C#, Razor, JavaScript ni configuración.
-> NO build. NO ejecución de aplicación. NO consulta a MySQL. NO migraciones. NO commit.
+> Documento de especificación y trazabilidad de la Fase 10.
+> Su restricción original de diseño fue superada por autorización explícita del usuario para implementar la fase completa.
+> La restricción operativa original (no build/app/MySQL/migraciones/commit) aplicaba solo al diseño inicial y quedó superada por la autorización de implementación.
 > Refleja el estado físico real inspeccionado en el repositorio al momento de escribir.
 
 - Commit base esperado: `08d8492 Atlas Restaurant POS - Fase 9 Cancelaciones y devoluciones`
@@ -775,5 +775,6 @@ Fase 10 solo podrá declararse completada si:
 
 ## 20. Restricciones de esta tarea
 
-- NO implementar; NO modificar código; NO build; NO app; NO MySQL; NO migraciones; NO PROJECT_STATE; NO commit; NO modificar `NEXT_TASK.txt`.
-- Único archivo creado: `Phases/FASE-10.md`.
+- Restricción original de diseño: NO implementar; NO modificar código; NO build; NO app; NO MySQL; NO migraciones; NO PROJECT_STATE; NO commit; NO modificar NEXT_TASK.txt.
+- Esta restricción quedó superada por autorización explícita posterior del usuario. La implementación ejecutada se documenta en Phases/PROJECT_STATE.md; NEXT_TASK.txt no fue modificado.
+- Este documento fue el único archivo creado durante el diseño original; la implementación posterior añadió los archivos de código, pruebas y UI indicados en el resumen.

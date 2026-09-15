@@ -1,0 +1,27 @@
+@model AtlasRestaurantPOS.Web.Models.ViewModels.EtiquetaViewModel
+@{
+    Layout = null;
+}
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="/lib/bootstrap/dist/css/bootstrap.min.css" />
+    <title>Etiqueta - @Model.Nombre</title>
+</head>
+<body class="bg-light p-4">
+    <main class="card shadow-sm mx-auto" style="max-width: 420px;">
+        <div class="card-body text-center">
+            <div class="text-uppercase text-muted small">@Model.Tipo</div>
+            <h1 class="h4">@Model.Nombre</h1>
+            @if (!string.IsNullOrWhiteSpace(Model.Unidad)) { <div>Unidad: @Model.Unidad (@Model.UnidadCodigo)</div> }
+            @if (Model.Precio.HasValue) { <div class="fs-5">Precio: @Model.Precio.Value.ToString("C")</div> }
+            <hr />
+            <div class="font-monospace fs-5">@Model.CodigoBarras</div>
+            <div class="font-monospace text-muted">@Model.Codigo</div>
+            <div class="small text-muted mt-3">Previsualización; la impresión y el hardware son externos.</div>
+        </div>
+    </main>
+</body>
+</html>

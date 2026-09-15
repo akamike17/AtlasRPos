@@ -1,8 +1,10 @@
 using System.Security.Claims;
+using AtlasRestaurantPOS.Web.Constants;
 using AtlasRestaurantPOS.Web.Data;
 using AtlasRestaurantPOS.Web.Models;
 using AtlasRestaurantPOS.Web.Models.ViewModels;
 using AtlasRestaurantPOS.Web.Services.Auditoria;
+using AtlasRestaurantPOS.Web.Services.CodigoInterno;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -15,12 +17,14 @@ public class ProductosController : Controller
     private readonly AtlasRestaurantDbContext _db;
     private readonly IAuditoriaService _auditoria;
     private readonly ILogger<ProductosController> _logger;
+    private readonly ICodigoInternoService _codigoInterno;
 
-    public ProductosController(AtlasRestaurantDbContext db, IAuditoriaService auditoria, ILogger<ProductosController> logger)
+    public ProductosController(AtlasRestaurantDbContext db, IAuditoriaService auditoria, ILogger<ProductosController> logger, ICodigoInternoService codigoInterno)
     {
         _db = db;
         _auditoria = auditoria;
         _logger = logger;
+        _codigoInterno = codigoInterno;
     }
 
     public IActionResult Index()
@@ -91,6 +95,10 @@ public class ProductosController : Controller
             var nombre = modelo.Nombre.Trim();
             var codigo = string.IsNullOrWhiteSpace(modelo.Codigo) ? null : modelo.Codigo.Trim();
             var codigoBarras = string.IsNullOrWhiteSpace(modelo.CodigoBarras) ? null : modelo.CodigoBarras.Trim();
+            if (modelo.GenerarCodigo)
+            {
+                codigo = await _codigoInterno.GenerarAsync(idEmpresa.Value, TiposEntidadCodigo.PRODUCTO);
+            }
 
             if (await _db.Productos.AnyAsync(p => p.IdEmpresa == idEmpresa.Value && p.IdCategoriaProducto == modelo.IdCategoriaProducto && p.Nombre == nombre))
             {
@@ -167,6 +175,10 @@ public class ProductosController : Controller
             var nombre = modelo.Nombre.Trim();
             var codigo = string.IsNullOrWhiteSpace(modelo.Codigo) ? null : modelo.Codigo.Trim();
             var codigoBarras = string.IsNullOrWhiteSpace(modelo.CodigoBarras) ? null : modelo.CodigoBarras.Trim();
+            if (modelo.GenerarCodigo)
+            {
+                codigo = await _codigoInterno.GenerarAsync(idEmpresa.Value, TiposEntidadCodigo.PRODUCTO);
+            }
 
             if (await _db.Productos.AnyAsync(p =>
                 p.IdEmpresa == idEmpresa.Value &&

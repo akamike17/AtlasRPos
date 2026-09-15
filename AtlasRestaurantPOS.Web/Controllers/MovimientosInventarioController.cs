@@ -5,6 +5,8 @@ using AtlasRestaurantPOS.Web.Data;
 using AtlasRestaurantPOS.Web.Models;
 using AtlasRestaurantPOS.Web.Models.ViewModels;
 using AtlasRestaurantPOS.Web.Services.Auditoria;
+using AtlasRestaurantPOS.Web.Services.Identificacion;
+using AtlasRestaurantPOS.Web.Services.Inventario;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -17,12 +19,16 @@ public class MovimientosInventarioController : Controller
     private readonly AtlasRestaurantDbContext _db;
     private readonly IAuditoriaService _auditoria;
     private readonly ILogger<MovimientosInventarioController> _logger;
+    private readonly IInventarioService _inventario;
+    private readonly IIdentificacionService _identificacion;
 
-    public MovimientosInventarioController(AtlasRestaurantDbContext db, IAuditoriaService auditoria, ILogger<MovimientosInventarioController> logger)
+    public MovimientosInventarioController(AtlasRestaurantDbContext db, IAuditoriaService auditoria, ILogger<MovimientosInventarioController> logger, IInventarioService inventario, IIdentificacionService identificacion)
     {
         _db = db;
         _auditoria = auditoria;
         _logger = logger;
+        _inventario = inventario;
+        _identificacion = identificacion;
     }
 
     public IActionResult Index()
@@ -53,7 +59,7 @@ public class MovimientosInventarioController : Controller
                 .Include(m => m.Insumo)
                     .ThenInclude(i => i.UnidadMedida)
                 .Include(m => m.Usuario)
-                .Where(m => m.Insumo.IdEmpresa == idEmpresa.Value);
+                .Where(m => m.Insumo.IdEmpresa == idEmpresa.Value && m.Sucursal.IdEmpresa == idEmpresa.Value);
 
             if (idSucursal is not null && idSucursal > 0)
             {
@@ -131,171 +137,41 @@ public class MovimientosInventarioController : Controller
 
     [HttpPost]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> Crear([FromBody] MovimientoForm modelo)
+    public async Task<IActionResult> Crear([FromBody] MovimientoForm modelo, CancellationToken cancellationToken)
     {
         if (modelo is null) return JsonError("Datos inválidos.");
         if (!ModelState.IsValid) return JsonError(ErrorModelState());
 
-        var tipo = (modelo.Tipo ?? string.Empty).Trim().ToUpperInvariant();
-        var permitidos = new[] {
-            TiposMovimientoInventario.ENTRADA,
-            TiposMovimientoInventario.AJUSTE_POSITIVO,
-            TiposMovimientoInventario.AJUSTE_NEGATIVO,
-            TiposMovimientoInventario.MERMA,
-            TiposMovimientoInventario.DEVOLUCION_INVENTARIO
-        };
-
-        if (!permitidos.Contains(tipo)) return JsonError("Tipo de movimiento no válido.");
-
-        if (modelo.Cantidad <= 0) return JsonError("La cantidad debe ser mayor a cero.");
-
-        var concepto = (modelo.Concepto ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(concepto) || concepto.Length < 3)
-        {
-            return JsonError("El motivo / concepto es obligatorio (mínimo 3 caracteres).");
-        }
-        if (concepto.Length > 500) concepto = concepto.Substring(0, 500);
-
         var idEmpresa = ObtenerClaimInt("IdEmpresa");
         var idSucursal = ObtenerClaimInt("IdSucursal");
         var idUsuario = ObtenerIdUsuario();
-        if (idEmpresa is null || idSucursal is null || idUsuario is null)
-        {
-            return JsonError("No se pudieron identificar tus datos operativos.");
-        }
+        if (idEmpresa is null || idSucursal is null || idUsuario is null) return JsonError("No se pudieron identificar tus datos operativos.");
+
+        var tipo = (modelo.Tipo ?? string.Empty).Trim().ToUpperInvariant();
+        var permitidos = new[] { TiposMovimientoInventario.ENTRADA, TiposMovimientoInventario.AJUSTE_POSITIVO, TiposMovimientoInventario.AJUSTE_NEGATIVO, TiposMovimientoInventario.MERMA, TiposMovimientoInventario.DEVOLUCION_INVENTARIO };
+        if (!permitidos.Contains(tipo)) return JsonError("Tipo de movimiento no válido.");
 
         try
         {
-            await using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted);
-            try
-            {
-                var insumo = await _db.Insumos
-                    .AsNoTracking()
-                    .FirstOrDefaultAsync(i => i.IdInsumo == modelo.IdInsumo && i.Activo && i.IdEmpresa == idEmpresa.Value);
-
-                if (insumo is null)
-                {
-                    await tx.RollbackAsync();
-                    return JsonError("El insumo no existe o está inactivo.");
-                }
-
-                var existencia = await _db.ExistenciasInsumo
-                    .FromSqlRaw("SELECT * FROM ExistenciasInsumo WHERE IdSucursal = {0} AND IdInsumo = {1} FOR UPDATE", idSucursal.Value, modelo.IdInsumo)
-                    .FirstOrDefaultAsync();
-
-                if (existencia is null)
-                {
-                    if (tipo == TiposMovimientoInventario.ENTRADA ||
-                        tipo == TiposMovimientoInventario.DEVOLUCION_INVENTARIO ||
-                        tipo == TiposMovimientoInventario.AJUSTE_POSITIVO)
-                    {
-                        existencia = new ExistenciaInsumo
-                        {
-                            IdSucursal = idSucursal.Value,
-                            IdInsumo = modelo.IdInsumo,
-                            CantidadActual = 0m,
-                            FechaModificacion = DateTime.UtcNow
-                        };
-                        _db.ExistenciasInsumo.Add(existencia);
-                        await _db.SaveChangesAsync();
-
-                        // Bloquear con FOR UPDATE tras creación
-                        existencia = await _db.ExistenciasInsumo
-                            .FromSqlRaw("SELECT * FROM ExistenciasInsumo WHERE IdSucursal = {0} AND IdInsumo = {1} FOR UPDATE", idSucursal.Value, modelo.IdInsumo)
-                            .FirstOrDefaultAsync();
-                    }
-                    else
-                    {
-                        await tx.RollbackAsync();
-                        return JsonError("No existe existencia previa para ese insumo en la sucursal.");
-                    }
-                }
-
-                var anterior = existencia!.CantidadActual;
-                decimal nueva = anterior;
-
-                switch (tipo)
-                {
-                    case TiposMovimientoInventario.ENTRADA:
-                    case TiposMovimientoInventario.AJUSTE_POSITIVO:
-                    case TiposMovimientoInventario.DEVOLUCION_INVENTARIO:
-                        nueva = anterior + modelo.Cantidad;
-                        break;
-                    case TiposMovimientoInventario.AJUSTE_NEGATIVO:
-                    case TiposMovimientoInventario.MERMA:
-                        nueva = anterior - modelo.Cantidad;
-                        break;
-                }
-
-                if (nueva < 0)
-                {
-                    await tx.RollbackAsync();
-                    return JsonError($"Operación rechazada: la existencia actual es {anterior:0.000} y no permite deducir {modelo.Cantidad:0.000}.");
-                }
-
-                existencia.CantidadActual = nueva;
-                existencia.FechaModificacion = DateTime.UtcNow;
-                await _db.SaveChangesAsync();
-
-                var movimiento = new MovimientoInventario
-                {
-                    IdSucursal = idSucursal.Value,
-                    IdInsumo = modelo.IdInsumo,
-                    IdUsuario = idUsuario.Value,
-                    Tipo = tipo,
-                    Cantidad = modelo.Cantidad,
-                    ExistenciaAnterior = anterior,
-                    ExistenciaNueva = nueva,
-                    CostoUnitario = null,
-                    Concepto = concepto,
-                    FechaMovimiento = DateTime.Now
-                };
-
-                _db.MovimientosInventario.Add(movimiento);
-                await _db.SaveChangesAsync();
-
-                string accionAuditoria = tipo switch
-                {
-                    TiposMovimientoInventario.ENTRADA => "ENTRADA_INVENTARIO",
-                    TiposMovimientoInventario.AJUSTE_POSITIVO or TiposMovimientoInventario.AJUSTE_NEGATIVO => "AJUSTE_INVENTARIO",
-                    TiposMovimientoInventario.MERMA => "MERMA_INVENTARIO",
-                    TiposMovimientoInventario.DEVOLUCION_INVENTARIO => "DEVOLUCION_INVENTARIO",
-                    _ => "CREAR_MOVIMIENTO_INVENTARIO"
-                };
-
-                await _auditoria.RegistrarAsync(
-                    "MovimientoInventario",
-                    movimiento.IdMovimientoInventario.ToString(),
-                    accionAuditoria,
-                    new { IdSucursal = movimiento.IdSucursal, IdInsumo = movimiento.IdInsumo, ExistenciaAnterior = anterior },
-                    new
-                    {
-                        movimiento.IdMovimientoInventario,
-                        movimiento.IdSucursal,
-                        movimiento.IdInsumo,
-                        Insumo = insumo.Nombre,
-                        movimiento.Tipo,
-                        movimiento.Cantidad,
-                        ExistenciaAnterior = anterior,
-                        ExistenciaNueva = nueva,
-                        movimiento.Concepto
-                    });
-
-                await tx.CommitAsync();
-
-                return JsonOk("Movimiento de inventario registrado correctamente.");
-            }
-            catch
-            {
-                await tx.RollbackAsync();
-                throw;
-            }
+            var resultado = await _inventario.RegistrarMovimientoAsync(idEmpresa.Value, idSucursal.Value, modelo.IdInsumo, idUsuario.Value, tipo, modelo.Cantidad, modelo.Concepto ?? string.Empty, modelo.CostoUnitario, cancellationToken: cancellationToken);
+            return Json(new { ok = resultado.Ok, mensaje = resultado.Mensaje, idMovimiento = resultado.IdMovimiento });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error al crear movimiento de inventario.");
             return JsonError("Ocurrió un error al registrar el movimiento.");
         }
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> IdentificarInsumo(string codigo, CancellationToken cancellationToken)
+    {
+        var idEmpresa = ObtenerClaimInt("IdEmpresa");
+        if (idEmpresa is null) return JsonError("No se pudo identificar tu empresa.");
+        if (string.IsNullOrWhiteSpace(codigo)) return JsonError("El código es obligatorio.");
+
+        var insumo = await _identificacion.BuscarInsumoAsync(idEmpresa.Value, codigo, cancellationToken);
+        return insumo is null ? JsonError("No existe un insumo activo con ese código.") : Json(new { ok = true, insumo });
     }
 
     [HttpGet]

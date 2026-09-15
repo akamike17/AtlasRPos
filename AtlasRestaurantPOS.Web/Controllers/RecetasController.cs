@@ -162,7 +162,7 @@ public class RecetasController : Controller
             await _auditoria.RegistrarAsync(
                 "RecetaProducto",
                 receta.IdRecetaProducto.ToString(),
-                "CREAR_RECETA",
+                "RECETA_AGREGAR_INSUMO",
                 null,
                 new { receta.IdRecetaProducto, receta.IdProducto, Producto = producto.Nombre, receta.IdInsumo, Insumo = insumo.Nombre, receta.Cantidad });
 
@@ -210,7 +210,7 @@ public class RecetasController : Controller
             await _auditoria.RegistrarAsync(
                 "RecetaProducto",
                 receta.IdRecetaProducto.ToString(),
-                "ACTUALIZAR_RECETA",
+                "RECETA_MODIFICAR_CANTIDAD",
                 anterior,
                 new { receta.IdRecetaProducto, receta.IdProducto, receta.IdInsumo, receta.Cantidad });
 
@@ -247,7 +247,7 @@ public class RecetasController : Controller
             _db.RecetasProducto.Remove(receta);
             await _db.SaveChangesAsync();
 
-            await _auditoria.RegistrarAsync("RecetaProducto", id.ToString(), "ELIMINAR_RECETA", datos, null);
+            await _auditoria.RegistrarAsync("RecetaProducto", id.ToString(), "RECETA_QUITAR_INSUMO", datos, null);
 
             return JsonOk("Insumo removido de la receta correctamente.");
         }
