@@ -1,0 +1,381 @@
+@{
+    ViewData["Title"] = "Movimientos de Inventario";
+}
+
+@Html.AntiForgeryToken()
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h1 class="h4 mb-0">Movimientos de Inventario</h1>
+        <small class="text-muted">Historial y registro de entradas, salidas, ajustes, mermas y consumos</small>
+    </div>
+    <div>
+        <a asp-controller="Existencias" asp-action="Index" class="btn btn-outline-secondary me-2">
+            <i class="bi bi-boxes"></i> Ver Existencias
+        </a>
+        <button type="button" class="btn btn-primary" onclick="window.abrirModalMovimiento()">
+            <i class="bi bi-plus-lg"></i> Registrar Movimiento
+        </button>
+    </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-md-3">
+                <label for="filtroSucursal" class="form-label small text-muted">Sucursal</label>
+                <select id="filtroSucursal" class="form-select">
+                    <option value="">Todas las sucursales</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label for="filtroTipo" class="form-label small text-muted">Tipo de Movimiento</label>
+                <select id="filtroTipo" class="form-select">
+                    <option value="">Todos los tipos</option>
+                    <option value="ENTRADA">ENTRADA (Inflow)</option>
+                    <option value="VENTA">VENTA (Consumo)</option>
+                    <option value="AJUSTE_POSITIVO">AJUSTE POSITIVO (+)</option>
+                    <option value="AJUSTE_NEGATIVO">AJUSTE NEGATIVO (-)</option>
+                    <option value="MERMA">MERMA (Desperdicio)</option>
+                    <option value="DEVOLUCION_INVENTARIO">DEVOLUCIÓN FÍSICA (+)</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label for="filtroFechaInicio" class="form-label small text-muted">Desde</label>
+                <input type="date" id="filtroFechaInicio" class="form-control" />
+            </div>
+            <div class="col-md-2">
+                <label for="filtroFechaFin" class="form-label small text-muted">Hasta</label>
+                <input type="date" id="filtroFechaFin" class="form-control" />
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+                <button type="button" class="btn btn-light border w-100" id="btnLimpiarFiltros">
+                    Limpiar
+                </button>
+            </div>
+        </div>
+        <div class="row mt-2">
+            <div class="col-12">
+                <input type="text" id="buscar" class="form-control" placeholder="Buscar por insumo, código, concepto o usuario..." />
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="table-responsive">
+    <table class="table table-hover align-middle">
+        <thead class="table-light">
+            <tr>
+                <th>Fecha / Hora</th>
+                <th>Sucursal</th>
+                <th>Insumo</th>
+                <th class="text-center">Tipo</th>
+                <th class="text-end">Cantidad</th>
+                <th class="text-end">Anterior</th>
+                <th class="text-end">Nueva</th>
+                <th>Unidad</th>
+                <th>Concepto / Motivo</th>
+                <th>Responsable</th>
+                <th>Trazabilidad</th>
+            </tr>
+        </thead>
+        <tbody id="tabla-movimientos">
+            <tr>
+                <td colspan="11" class="text-center text-muted py-4">Cargando movimientos...</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Modal Registrar Movimiento -->
+<div class="modal fade" id="modalMovimiento" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="formMovimiento" novalidate>
+                <div class="modal-header">
+                    <h5 class="modal-title">Registrar Movimiento de Inventario</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label" for="movInsumo">Insumo *</label>
+                        <select id="movInsumo" class="form-select" required></select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="movTipo">Tipo de Movimiento *</label>
+                        <select id="movTipo" class="form-select" required>
+                            <option value="ENTRADA">ENTRADA (Aumenta existencia por compra o reposición)</option>
+                            <option value="AJUSTE_POSITIVO">AJUSTE POSITIVO (Aumenta existencia por recuento)</option>
+                            <option value="AJUSTE_NEGATIVO">AJUSTE NEGATIVO (Disminuye existencia por recuento)</option>
+                            <option value="MERMA">MERMA (Disminuye existencia por caducidad/daño/desperdicio)</option>
+                            <option value="DEVOLUCION_INVENTARIO">DEVOLUCIÓN FÍSICA (Aumenta existencia por retorno al inventario)</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="movCantidad">Cantidad *</label>
+                        <div class="input-group">
+                            <input type="number" id="movCantidad" class="form-control" step="0.001" min="0.001" required />
+                            <span class="input-group-text" id="movUnidadMedida">-</span>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="movConcepto">Concepto / Motivo *</label>
+                        <textarea id="movConcepto" class="form-control" rows="3" maxlength="500" required placeholder="Describe el motivo o referencia del movimiento..."></textarea>
+                        <div class="form-text">Mínimo 3 caracteres. Registro auditable e inmutable.</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary" id="btnGuardarMovimiento">Registrar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@await Html.PartialAsync("_Toast")
+
+@section Scripts {
+<script>
+(function () {
+    const token = document.querySelector('input[name="__RequestVerificationToken"]')?.value || '';
+    const tabla = document.getElementById('tabla-movimientos');
+    const inputBuscar = document.getElementById('buscar');
+    const selectSucursal = document.getElementById('filtroSucursal');
+    const selectTipo = document.getElementById('filtroTipo');
+    const inputFechaInicio = document.getElementById('filtroFechaInicio');
+    const inputFechaFin = document.getElementById('filtroFechaFin');
+    const btnLimpiar = document.getElementById('btnLimpiarFiltros');
+
+    const modalMovimientoEl = document.getElementById('modalMovimiento');
+    const modalMovimiento = new bootstrap.Modal(modalMovimientoEl);
+    const formMovimiento = document.getElementById('formMovimiento');
+    const selectMovInsumo = document.getElementById('movInsumo');
+    const selectMovTipo = document.getElementById('movTipo');
+    const inputMovCantidad = document.getElementById('movCantidad');
+    const inputMovConcepto = document.getElementById('movConcepto');
+    const lblMovUnidad = document.getElementById('movUnidadMedida');
+
+    let catalogoInsumos = [];
+    let debounceTimer = null;
+
+    const headers = {
+        'X-Requested-With': 'XMLHttpRequest',
+        'RequestVerificationToken': token,
+        'Content-Type': 'application/json'
+    };
+
+    function escapeHtml(texto) {
+        if (!texto) return '';
+        return String(texto)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function formatearCantidad(valor) {
+        if (valor === null || valor === undefined) return '0.000';
+        return Number(valor).toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+    }
+
+    function formatearFecha(iso) {
+        if (!iso) return '-';
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return '-';
+        return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function badgeTipo(tipo) {
+        switch (tipo) {
+            case 'ENTRADA':
+                return '<span class="badge bg-success-subtle text-success border border-success-subtle">ENTRADA</span>';
+            case 'VENTA':
+                return '<span class="badge bg-primary-subtle text-primary border border-primary-subtle">VENTA</span>';
+            case 'AJUSTE_POSITIVO':
+                return '<span class="badge bg-info-subtle text-info border border-info-subtle">AJUSTE (+)</span>';
+            case 'AJUSTE_NEGATIVO':
+                return '<span class="badge bg-warning-subtle text-warning border border-warning-subtle">AJUSTE (-)</span>';
+            case 'MERMA':
+                return '<span class="badge bg-danger-subtle text-danger border border-danger-subtle">MERMA</span>';
+            case 'DEVOLUCION_INVENTARIO':
+                return '<span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">DEVOLUCIÓN</span>';
+            default:
+                return `<span class="badge bg-light text-dark border">${escapeHtml(tipo)}</span>`;
+        }
+    }
+
+    async function cargarCatalogos() {
+        try {
+            const res = await fetch('@Url.Action("ObtenerCatalogos", "MovimientosInventario")', {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            });
+            const data = await res.json();
+            if (data.ok) {
+                catalogoInsumos = data.insumos || [];
+
+                selectSucursal.innerHTML = '<option value="">Todas las sucursales</option>';
+                (data.sucursales || []).forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s.idSucursal;
+                    opt.textContent = s.nombre;
+                    selectSucursal.appendChild(opt);
+                });
+
+                selectMovInsumo.innerHTML = '<option value="">Selecciona un insumo</option>';
+                catalogoInsumos.forEach(i => {
+                    const opt = document.createElement('option');
+                    opt.value = i.idInsumo;
+                    opt.textContent = `${i.nombre} ${i.codigo ? `(${i.codigo})` : ''} - [${i.unidadCodigo || i.unidad || 'Unidad'}]`;
+                    selectMovInsumo.appendChild(opt);
+                });
+            }
+        } catch (err) {
+            console.error('Error cargando catálogos:', err);
+        }
+    }
+
+    selectMovInsumo.addEventListener('change', () => {
+        const id = parseInt(selectMovInsumo.value, 10);
+        const insumo = catalogoInsumos.find(i => i.idInsumo === id);
+        lblMovUnidad.textContent = insumo ? (insumo.unidadCodigo || insumo.unidad || '-') : '-';
+    });
+
+    async function cargarMovimientos() {
+        const idSucursal = selectSucursal.value;
+        const tipo = selectTipo.value;
+        const fechaInicio = inputFechaInicio.value;
+        const fechaFin = inputFechaFin.value;
+        const termino = inputBuscar.value.trim();
+
+        const params = new URLSearchParams();
+        if (idSucursal) params.append('idSucursal', idSucursal);
+        if (tipo) params.append('tipo', tipo);
+        if (fechaInicio) params.append('fechaInicio', fechaInicio);
+        if (fechaFin) params.append('fechaFin', fechaFin);
+        if (termino) params.append('termino', termino);
+
+        try {
+            const res = await fetch(`@Url.Action("Buscar", "MovimientosInventario")?${params.toString()}`, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            });
+            const lista = await res.json();
+
+            if (!Array.isArray(lista)) {
+                tabla.innerHTML = '<tr><td colspan="11" class="text-center text-danger py-4">Error al consultar movimientos.</td></tr>';
+                return;
+            }
+
+            if (lista.length === 0) {
+                tabla.innerHTML = '<tr><td colspan="11" class="text-center text-muted py-4">No se encontraron movimientos con los filtros especificados.</td></tr>';
+                return;
+            }
+
+            const html = lista.map(m => `
+                <tr>
+                    <td class="small">${formatearFecha(m.fechaMovimiento)}</td>
+                    <td class="fw-semibold small">${escapeHtml(m.sucursal)}</td>
+                    <td>
+                        <span class="fw-bold">${escapeHtml(m.insumo)}</span>
+                        ${m.insumoCodigo ? `<small class="text-muted d-block font-monospace">${escapeHtml(m.insumoCodigo)}</small>` : ''}
+                    </td>
+                    <td class="text-center">${badgeTipo(m.tipo)}</td>
+                    <td class="text-end font-monospace fw-bold">${formatearCantidad(m.cantidad)}</td>
+                    <td class="text-end font-monospace text-muted small">${formatearCantidad(m.existenciaAnterior)}</td>
+                    <td class="text-end font-monospace fw-semibold">${formatearCantidad(m.existenciaNueva)}</td>
+                    <td><span class="badge bg-light text-secondary border">${escapeHtml(m.unidadCodigo || m.unidad || '-')}</span></td>
+                    <td class="small">${escapeHtml(m.concepto)}</td>
+                    <td class="small text-muted">${escapeHtml(m.usuario)}</td>
+                    <td class="small">${m.idComanda ? `<span class="badge bg-secondary-subtle text-secondary border">Comanda #${m.idComanda}</span>` : '<span class="text-muted">-</span>'}</td>
+                </tr>
+            `).join('');
+
+            tabla.innerHTML = html;
+
+        } catch (err) {
+            console.error('Error cargando movimientos:', err);
+            tabla.innerHTML = '<tr><td colspan="11" class="text-center text-danger py-4">Error al consultar el servidor.</td></tr>';
+        }
+    }
+
+    window.abrirModalMovimiento = function () {
+        formMovimiento.reset();
+        lblMovUnidad.textContent = '-';
+        modalMovimiento.show();
+    };
+
+    formMovimiento.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const idInsumo = parseInt(selectMovInsumo.value, 10);
+        const tipo = selectMovTipo.value;
+        const cantidad = parseFloat(inputMovCantidad.value);
+        const concepto = inputMovConcepto.value.trim();
+
+        if (!idInsumo || idInsumo <= 0) {
+            window.mostrarToast?.('Validación', 'Selecciona un insumo.', 'warning');
+            return;
+        }
+        if (!tipo) {
+            window.mostrarToast?.('Validación', 'Selecciona un tipo de movimiento.', 'warning');
+            return;
+        }
+        if (isNaN(cantidad) || cantidad <= 0) {
+            window.mostrarToast?.('Validación', 'Ingresa una cantidad mayor a cero.', 'warning');
+            return;
+        }
+        if (!concepto || concepto.length < 3) {
+            window.mostrarToast?.('Validación', 'El motivo / concepto es obligatorio (mínimo 3 caracteres).', 'warning');
+            return;
+        }
+
+        const payload = {
+            idInsumo,
+            tipo,
+            cantidad,
+            concepto
+        };
+
+        try {
+            const res = await fetch('@Url.Action("Crear", "MovimientosInventario")', {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data.ok) {
+                modalMovimiento.hide();
+                window.mostrarToast?.('Éxito', data.mensaje || 'Movimiento registrado correctamente.', 'success');
+                cargarMovimientos();
+            } else {
+                window.mostrarToast?.('Aviso', data.mensaje || 'Error al registrar movimiento.', 'warning');
+            }
+        } catch (err) {
+            window.mostrarToast?.('Error', 'Error de comunicación con el servidor.', 'danger');
+        }
+    });
+
+    btnLimpiar.addEventListener('click', () => {
+        selectSucursal.value = '';
+        selectTipo.value = '';
+        inputFechaInicio.value = '';
+        inputFechaFin.value = '';
+        inputBuscar.value = '';
+        cargarMovimientos();
+    });
+
+    inputBuscar.addEventListener('input', () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(cargarMovimientos, 300);
+    });
+
+    selectSucursal.addEventListener('change', cargarMovimientos);
+    selectTipo.addEventListener('change', cargarMovimientos);
+    inputFechaInicio.addEventListener('change', cargarMovimientos);
+    inputFechaFin.addEventListener('change', cargarMovimientos);
+
+    cargarCatalogos().then(cargarMovimientos);
+})();
+</script>
+}

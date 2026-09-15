@@ -1,0 +1,381 @@
+@{
+    ViewData["Title"] = "Recetas de Productos";
+}
+
+@Html.AntiForgeryToken()
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h1 class="h4 mb-0">Recetas de Productos</h1>
+        <small class="text-muted">Insumos y proporciones que se consumen automáticamente al vender un producto</small>
+    </div>
+    <button type="button" class="btn btn-primary" onclick="window.abrirModalCrear()">
+        <i class="bi bi-plus-lg"></i> Agregar Insumo a Receta
+    </button>
+</div>
+
+<div class="card shadow-sm mb-3">
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-md-5">
+                <label for="filtroProducto" class="form-label small text-muted">Filtrar por Producto</label>
+                <select id="filtroProducto" class="form-select">
+                    <option value="">Todos los productos</option>
+                </select>
+            </div>
+            <div class="col-md-7">
+                <label for="buscar" class="form-label small text-muted">Buscar</label>
+                <input type="text" id="buscar" class="form-control" placeholder="Buscar por producto, insumo o código..." />
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="table-responsive">
+    <table class="table table-hover align-middle">
+        <thead class="table-light">
+            <tr>
+                <th>Producto</th>
+                <th>Insumo</th>
+                <th>Código Insumo</th>
+                <th class="text-end">Cantidad Consumida</th>
+                <th>Unidad de Medida</th>
+                <th class="text-end">Acciones</th>
+            </tr>
+        </thead>
+        <tbody id="tabla-recetas">
+            <tr>
+                <td colspan="6" class="text-center text-muted py-4">Cargando recetas...</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Modal Crear / Agregar Insumo -->
+<div class="modal fade" id="modalReceta" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="formReceta" novalidate>
+                <div class="modal-header">
+                    <h5 class="modal-title" id="tituloModalReceta">Agregar Insumo a Receta</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="IdRecetaProducto" value="0" />
+                    <div class="mb-3" id="grupoProducto">
+                        <label class="form-label" for="IdProducto">Producto *</label>
+                        <select id="IdProducto" class="form-select" required></select>
+                    </div>
+                    <div class="mb-3" id="grupoInsumo">
+                        <label class="form-label" for="IdInsumo">Insumo *</label>
+                        <select id="IdInsumo" class="form-select" required></select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="Cantidad">Cantidad consumida por unidad de venta *</label>
+                        <div class="input-group">
+                            <input type="number" id="Cantidad" class="form-control" step="0.001" min="0.000001" required />
+                            <span class="input-group-text" id="lblUnidadMedida">-</span>
+                        </div>
+                        <div class="form-text">Ejemplo: 0.180 para 180 gramos en una hamburguesa.</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary" id="btnGuardarReceta">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Confirmar Eliminación -->
+<div class="modal fade" id="modalEliminar" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Confirmar</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-0" id="mensajeEliminar">¿Deseas remover este insumo de la receta?</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">No</button>
+                <button type="button" class="btn btn-danger" id="btnConfirmarEliminar">Sí, eliminar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@await Html.PartialAsync("_Toast")
+
+@section Scripts {
+<script>
+(function () {
+    const token = document.querySelector('input[name="__RequestVerificationToken"]')?.value || '';
+    const tabla = document.getElementById('tabla-recetas');
+    const inputBuscar = document.getElementById('buscar');
+    const selectFiltroProducto = document.getElementById('filtroProducto');
+
+    const modalRecetaEl = document.getElementById('modalReceta');
+    const modalReceta = new bootstrap.Modal(modalRecetaEl);
+    const formReceta = document.getElementById('formReceta');
+    const tituloModal = document.getElementById('tituloModalReceta');
+    const inputIdReceta = document.getElementById('IdRecetaProducto');
+    const selectProducto = document.getElementById('IdProducto');
+    const selectInsumo = document.getElementById('IdInsumo');
+    const inputCantidad = document.getElementById('Cantidad');
+    const lblUnidad = document.getElementById('lblUnidadMedida');
+
+    const modalEliminarEl = document.getElementById('modalEliminar');
+    const modalEliminar = new bootstrap.Modal(modalEliminarEl);
+    const btnConfirmarEliminar = document.getElementById('btnConfirmarEliminar');
+
+    let catalogoProductos = [];
+    let catalogoInsumos = [];
+    let debounceTimer = null;
+    let idRecetaAEliminar = null;
+
+    const headers = {
+        'X-Requested-With': 'XMLHttpRequest',
+        'RequestVerificationToken': token,
+        'Content-Type': 'application/json'
+    };
+
+    function escapeHtml(texto) {
+        if (!texto) return '';
+        return String(texto)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function formatearCantidad(valor) {
+        if (valor === null || valor === undefined) return '0.000';
+        return Number(valor).toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+    }
+
+    async function cargarCatalogos() {
+        try {
+            const res = await fetch('@Url.Action("ObtenerCatalogos", "Recetas")', {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            });
+            const data = await res.json();
+            if (data.ok) {
+                catalogoProductos = data.productos || [];
+                catalogoInsumos = data.insumos || [];
+
+                selectFiltroProducto.innerHTML = '<option value="">Todos los productos</option>';
+                selectProducto.innerHTML = '<option value="">Selecciona un producto</option>';
+                catalogoProductos.forEach(p => {
+                    const opt1 = document.createElement('option');
+                    opt1.value = p.idProducto;
+                    opt1.textContent = `${p.nombre} (${p.categoria || 'Sin cat'})`;
+                    selectFiltroProducto.appendChild(opt1);
+
+                    const opt2 = document.createElement('option');
+                    opt2.value = p.idProducto;
+                    opt2.textContent = `${p.nombre} (${p.categoria || 'Sin cat'})`;
+                    selectProducto.appendChild(opt2);
+                });
+
+                selectInsumo.innerHTML = '<option value="">Selecciona un insumo</option>';
+                catalogoInsumos.forEach(i => {
+                    const opt = document.createElement('option');
+                    opt.value = i.idInsumo;
+                    opt.textContent = `${i.nombre} (${i.unidadCodigo || i.unidad || 'Unidad'})`;
+                    opt.dataset.unidad = i.unidadCodigo || i.unidad || '';
+                    selectInsumo.appendChild(opt);
+                });
+            }
+        } catch (err) {
+            console.error('Error cargando catálogos de recetas:', err);
+        }
+    }
+
+    function actualizarUnidadMedida() {
+        const idInsumo = selectInsumo.value;
+        const insumo = catalogoInsumos.find(i => i.idInsumo == idInsumo);
+        lblUnidad.textContent = insumo ? (insumo.unidadCodigo || insumo.unidad || '-') : '-';
+    }
+
+    selectInsumo.addEventListener('change', actualizarUnidadMedida);
+
+    async function cargarRecetas() {
+        const idProducto = selectFiltroProducto.value;
+        const termino = inputBuscar.value.trim();
+
+        const params = new URLSearchParams();
+        if (idProducto) params.append('idProducto', idProducto);
+        if (termino) params.append('termino', termino);
+
+        try {
+            const res = await fetch(`@Url.Action("Buscar", "Recetas")?${params.toString()}`, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            });
+            const lista = await res.json();
+
+            if (!Array.isArray(lista)) {
+                tabla.innerHTML = '<tr><td colspan="6" class="text-center text-danger py-4">Error al cargar recetas.</td></tr>';
+                return;
+            }
+
+            if (lista.length === 0) {
+                tabla.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">No se encontraron recetas con los filtros aplicados.</td></tr>';
+                return;
+            }
+
+            const html = lista.map(r => `
+                <tr>
+                    <td class="fw-semibold">
+                        ${escapeHtml(r.producto)}
+                        ${r.productoCodigo ? `<small class="text-muted d-block font-monospace">${escapeHtml(r.productoCodigo)}</small>` : ''}
+                    </td>
+                    <td>
+                        <span class="fw-bold">${escapeHtml(r.insumo)}</span>
+                    </td>
+                    <td><span class="font-monospace text-muted">${escapeHtml(r.insumoCodigo || '-')}</span></td>
+                    <td class="text-end font-monospace fw-bold text-primary">${formatearCantidad(r.cantidad)}</td>
+                    <td><span class="badge bg-light text-secondary border">${escapeHtml(r.unidadCodigo || r.unidad || '-')}</span></td>
+                    <td class="text-end">
+                        <button type="button" class="btn btn-sm btn-outline-secondary me-1" onclick="window.editarReceta(${r.idRecetaProducto}, ${r.idProducto}, ${r.idInsumo}, ${r.cantidad})">
+                            <i class="bi bi-pencil"></i> Editar
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-danger" onclick="window.confirmarEliminar(${r.idRecetaProducto}, '${escapeHtml(r.producto)}', '${escapeHtml(r.insumo)}')">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+
+            tabla.innerHTML = html;
+
+        } catch (err) {
+            console.error('Error cargando recetas:', err);
+            tabla.innerHTML = '<tr><td colspan="6" class="text-center text-danger py-4">Error al consultar el servidor.</td></tr>';
+        }
+    }
+
+    window.abrirModalCrear = function () {
+        formReceta.reset();
+        inputIdReceta.value = '0';
+        tituloModal.textContent = 'Agregar Insumo a Receta';
+        selectProducto.disabled = false;
+        selectInsumo.disabled = false;
+        lblUnidad.textContent = '-';
+        if (selectFiltroProducto.value) {
+            selectProducto.value = selectFiltroProducto.value;
+        }
+        modalReceta.show();
+    };
+
+    window.editarReceta = function (id, idProducto, idInsumo, cantidad) {
+        formReceta.reset();
+        inputIdReceta.value = id;
+        tituloModal.textContent = 'Modificar Cantidad de Receta';
+        selectProducto.value = idProducto;
+        selectInsumo.value = idInsumo;
+        selectProducto.disabled = true;
+        selectInsumo.disabled = true;
+        inputCantidad.value = cantidad;
+        actualizarUnidadMedida();
+        modalReceta.show();
+    };
+
+    window.confirmarEliminar = function (id, producto, insumo) {
+        idRecetaAEliminar = id;
+        document.getElementById('mensajeEliminar').textContent = `¿Deseas remover el insumo "${insumo}" de la receta de "${producto}"?`;
+        modalEliminar.show();
+    };
+
+    btnConfirmarEliminar.addEventListener('click', async () => {
+        if (!idRecetaAEliminar) return;
+        try {
+            const res = await fetch(`@Url.Action("Borrar", "Recetas")?id=${idRecetaAEliminar}`, {
+                method: 'POST',
+                headers
+            });
+            const data = await res.json();
+            modalEliminar.hide();
+            if (data.ok) {
+                window.mostrarToast?.('Éxito', data.mensaje || 'Receta eliminada.', 'success');
+                cargarRecetas();
+            } else {
+                window.mostrarToast?.('Aviso', data.mensaje || 'No se pudo eliminar.', 'warning');
+            }
+        } catch (err) {
+            modalEliminar.hide();
+            window.mostrarToast?.('Error', 'Ocurrió un error al procesar la solicitud.', 'danger');
+        }
+    });
+
+    formReceta.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const idReceta = parseInt(inputIdReceta.value, 10) || 0;
+        const idProducto = parseInt(selectProducto.value, 10);
+        const idInsumo = parseInt(selectInsumo.value, 10);
+        const cantidad = parseFloat(inputCantidad.value);
+
+        if (!idProducto || idProducto <= 0) {
+            window.mostrarToast?.('Validación', 'Selecciona un producto.', 'warning');
+            return;
+        }
+        if (!idInsumo || idInsumo <= 0) {
+            window.mostrarToast?.('Validación', 'Selecciona un insumo.', 'warning');
+            return;
+        }
+        if (isNaN(cantidad) || cantidad <= 0) {
+            window.mostrarToast?.('Validación', 'La cantidad debe ser un número mayor a cero.', 'warning');
+            return;
+        }
+
+        const payload = {
+            idRecetaProducto: idReceta,
+            idProducto,
+            idInsumo,
+            cantidad
+        };
+
+        const url = idReceta > 0 ? '@Url.Action("Editar", "Recetas")' : '@Url.Action("Crear", "Recetas")';
+
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data.ok) {
+                modalReceta.hide();
+                window.mostrarToast?.('Éxito', data.mensaje || 'Receta guardada.', 'success');
+                cargarRecetas();
+            } else {
+                window.mostrarToast?.('Aviso', data.mensaje || 'Error al guardar.', 'warning');
+            }
+        } catch (err) {
+            window.mostrarToast?.('Error', 'Error de comunicación con el servidor.', 'danger');
+        }
+    });
+
+    inputBuscar.addEventListener('input', () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(cargarRecetas, 300);
+    });
+
+    selectFiltroProducto.addEventListener('change', cargarRecetas);
+
+    // Parámetro opcional en URL ?idProducto=123
+    const urlParams = new URLSearchParams(window.location.search);
+    const idProductoParam = urlParams.get('idProducto');
+
+    cargarCatalogos().then(() => {
+        if (idProductoParam) {
+            selectFiltroProducto.value = idProductoParam;
+        }
+        cargarRecetas();
+    });
+})();
+</script>
+}

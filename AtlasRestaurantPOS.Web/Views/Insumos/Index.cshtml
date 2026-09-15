@@ -1,0 +1,299 @@
+@{
+    ViewData["Title"] = "Insumos";
+}
+
+@Html.AntiForgeryToken()
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="h4 mb-0">Insumos</h1>
+    <button type="button" class="btn btn-primary" onclick="window.abrirModal()">Nuevo</button>
+</div>
+
+<div class="mb-3">
+    <input type="text" id="buscar" class="form-control" placeholder="Buscar por nombre, código o código de barras..." />
+</div>
+
+<div class="table-responsive">
+    <table class="table table-striped align-middle">
+        <thead>
+            <tr>
+                <th>Id</th>
+                <th>Empresa</th>
+                <th>Código</th>
+                <th>Código de Barras</th>
+                <th>Nombre</th>
+                <th>Unidad</th>
+                <th>Costo</th>
+                <th>Stock Mín</th>
+                <th>Estatus</th>
+                <th class="text-end">Acciones</th>
+            </tr>
+        </thead>
+        <tbody id="tabla-insumos"></tbody>
+    </table>
+</div>
+
+<div class="modal fade" id="modalInsumo" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form id="formInsumo" novalidate>
+                <div class="modal-header">
+                    <h5 class="modal-title" id="tituloModal">Nuevo insumo</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="IdInsumo" />
+                    <div class="mb-3">
+                        <label class="form-label" for="IdUnidadMedida">Unidad de Medida *</label>
+                        <select id="IdUnidadMedida" class="form-select"></select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="Codigo">Código</label>
+                        <div class="input-group">
+                            <input type="text" id="Codigo" class="form-control" maxlength="50" />
+                            <span class="input-group-text">
+                                <input type="checkbox" id="GenerarCodigo" onchange="window.toggleCodigo()" />
+                                <label class="form-label mb-0 ms-1" for="GenerarCodigo">Generar automáticamente</label>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="CodigoBarras">Código de Barras</label>
+                        <input type="text" id="CodigoBarras" class="form-control" maxlength="50" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="Nombre">Nombre *</label>
+                        <input type="text" id="Nombre" class="form-control" maxlength="150" />
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label" for="CostoReferencia">Costo de referencia *</label>
+                            <input type="number" id="CostoReferencia" class="form-control" step="0.01" min="0" />
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label" for="StockMinimo">Stock mínimo *</label>
+                            <input type="number" id="StockMinimo" class="form-control" step="0.001" min="0" />
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+@await Html.PartialAsync("_Toast")
+
+@section Scripts {
+<script>
+(function () {
+    const token = document.querySelector('input[name="__RequestVerificationToken"]').value;
+    const modalEl = document.getElementById('modalInsumo');
+    const modal = new bootstrap.Modal(modalEl);
+    const selectUnidad = document.getElementById('IdUnidadMedida');
+    const chkGenerarCodigo = document.getElementById('GenerarCodigo');
+    let debounceTimer = null;
+
+    const headers = {
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': 'application/json'
+    };
+
+    async function respuestaJson(res) {
+        if (res.status === 401) { window.location.href = '/Acceso/Login'; return null; }
+        if (res.status === 403) { mostrarToast('Acceso denegado.', 'error'); return null; }
+        if (!res.ok) { mostrarToast('Error en la solicitud.', 'error'); return null; }
+        return res.json();
+    }
+
+    function toggleCodigo() {
+        const codigoInput = document.getElementById('Codigo');
+        if (chkGenerarCodigo.checked) {
+            codigoInput.value = '';
+            codigoInput.disabled = true;
+        } else {
+            codigoInput.disabled = false;
+        }
+    }
+
+    window.toggleCodigo = toggleCodigo;
+
+    async function cargar(termino) {
+        const url = '/Insumos/Buscar?termino=' + encodeURIComponent(termino);
+        try {
+            const res = await fetch(url, { headers });
+            const data = await respuestaJson(res);
+            if (data) renderizar(data);
+        } catch (e) {
+            mostrarToast('Error de conexión.', 'error');
+        }
+    }
+
+    function renderizar(lista) {
+        const tbody = document.getElementById('tabla-insumos');
+        tbody.innerHTML = '';
+        if (!lista.length) {
+            tbody.innerHTML = '<tr><td colspan="10" class="text-center">Sin resultados</td></tr>';
+            return;
+        }
+        lista.forEach(i => {
+            const tr = document.createElement('tr');
+            const badge = i.activo
+                ? '<span class="badge bg-success">Activo</span>'
+                : '<span class="badge bg-secondary">Inactivo</span>';
+            const botonEstatus = i.activo
+                ? '<button type="button" class="btn btn-sm btn-outline-warning" onclick="window.cambiarEstatus(' + i.idInsumo + ', false)">Inactivar</button>'
+                : '<button type="button" class="btn btn-sm btn-outline-success" onclick="window.cambiarEstatus(' + i.idInsumo + ', true)">Activar</button>';
+            tr.innerHTML = '<td>' + i.idInsumo + '</td>' +
+                '<td>' + escapeHtml(i.empresa) + '</td>' +
+                '<td>' + escapeHtml(i.codigo) + '</td>' +
+                '<td>' + escapeHtml(i.codigoBarras) + '</td>' +
+                '<td>' + escapeHtml(i.nombre) + '</td>' +
+                '<td>' + escapeHtml(i.unidadMedida) + '</td>' +
+                '<td>' + Number(i.costoReferencia).toFixed(2) + '</td>' +
+                '<td>' + Number(i.stockMinimo).toFixed(3) + '</td>' +
+                '<td>' + badge + '</td>' +
+                '<td class="text-end text-nowrap">' +
+                '<button type="button" class="btn btn-sm btn-outline-primary me-1" onclick="window.editar(' + i.idInsumo + ')">Editar</button>' +
+                botonEstatus +
+                '</td>';
+            tbody.appendChild(tr);
+        });
+    }
+
+    async function cargarUnidades() {
+        try {
+            const res = await fetch('/UnidadesMedida/Buscar', { headers });
+            const data = await respuestaJson(res);
+            if (!data) return;
+            selectUnidad.innerHTML = '<option value="">Seleccione...</option>';
+            data.filter(u => u.activo).forEach(u => {
+                const op = document.createElement('option');
+                op.value = u.idUnidadMedida;
+                op.textContent = u.nombre + ' (' + u.codigo + ')';
+                selectUnidad.appendChild(op);
+            });
+        } catch (err) {
+            mostrarToast('Error al cargar unidades de medida.', 'error');
+        }
+    }
+
+    function abrirModal() {
+        document.getElementById('formInsumo').reset();
+        document.getElementById('IdInsumo').value = '';
+        document.getElementById('tituloModal').textContent = 'Nuevo insumo';
+        chkGenerarCodigo.checked = false;
+        chkGenerarCodigo.parentElement.parentElement.style.display = '';
+        document.getElementById('Codigo').disabled = false;
+        document.getElementById('Codigo').value = '';
+        document.getElementById('CodigoBarras').value = '';
+        selectUnidad.dispatchEvent(new Event('change'));
+        modal.show();
+    }
+
+    async function editar(id) {
+        const url = '/Insumos/Obtener?id=' + id;
+        try {
+            const res = await fetch(url, { headers });
+            const c = await respuestaJson(res);
+            if (!c) return;
+            if (c.ok === false) { mostrarToast(c.mensaje || 'No se encontró el registro.', 'error'); return; }
+            document.getElementById('IdInsumo').value = c.idInsumo;
+            document.getElementById('Codigo').value = c.codigo || '';
+            document.getElementById('CodigoBarras').value = c.codigoBarras || '';
+            document.getElementById('Nombre').value = c.nombre;
+            document.getElementById('IdUnidadMedida').value = c.idUnidadMedida || '';
+            document.getElementById('CostoReferencia').value = Number(c.costoReferencia).toFixed(2);
+            document.getElementById('StockMinimo').value = Number(c.stockMinimo).toFixed(3);
+            chkGenerarCodigo.checked = false;
+            chkGenerarCodigo.parentElement.parentElement.style.display = 'none';
+            document.getElementById('Codigo').disabled = false;
+            document.getElementById('tituloModal').textContent = 'Editar insumo';
+            modal.show();
+        } catch (err) {
+            mostrarToast('Error de conexión.', 'error');
+        }
+    }
+
+    async function guardar() {
+        const id = document.getElementById('IdInsumo').value;
+        const payload = {
+            idInsumo: id ? parseInt(id, 10) : 0,
+            idUnidadMedida: parseInt(document.getElementById('IdUnidadMedida').value, 10) || 0,
+            codigo: document.getElementById('Codigo').value.trim(),
+            codigoBarras: document.getElementById('CodigoBarras').value.trim(),
+            nombre: document.getElementById('Nombre').value.trim(),
+            costoReferencia: parseFloat(document.getElementById('CostoReferencia').value) || 0,
+            stockMinimo: parseFloat(document.getElementById('StockMinimo').value) || 0,
+            generarCodigo: chkGenerarCodigo.checked
+        };
+        const url = payload.idInsumo ? '/Insumos/Editar' : '/Insumos/Crear';
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: Object.assign({}, headers, {
+                    'Content-Type': 'application/json',
+                    'RequestVerificationToken': token
+                }),
+                body: JSON.stringify(payload)
+            });
+            const r = await respuestaJson(res);
+            if (!r) return;
+            if (r.ok) {
+                mostrarToast(r.mensaje, 'ok');
+                modal.hide();
+                cargar(document.getElementById('buscar').value.trim());
+            } else {
+                mostrarToast(r.mensaje, 'error');
+            }
+        } catch (err) {
+            mostrarToast('Error de conexión.', 'error');
+        }
+    }
+
+    async function cambiarEstatus(id, activar) {
+        const accion = activar ? '¿Activar el insumo?' : '¿Inactivar el insumo?';
+        if (!confirm(accion)) return;
+        const url = activar ? '/Insumos/Activar?id=' + id : '/Insumos/Inactivar?id=' + id;
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: Object.assign({}, headers, { 'RequestVerificationToken': token })
+            });
+            const r = await respuestaJson(res);
+            if (!r) return;
+            if (r.ok) {
+                mostrarToast(r.mensaje, 'ok');
+                cargar(document.getElementById('buscar').value.trim());
+            } else {
+                mostrarToast(r.mensaje, 'error');
+            }
+        } catch (err) {
+            mostrarToast('Error de conexión.', 'error');
+        }
+    }
+
+    window.cambiarEstatus = cambiarEstatus;
+    window.editar = editar;
+    window.abrirModal = abrirModal;
+
+    document.getElementById('formInsumo').addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        guardar();
+    });
+
+    document.getElementById('buscar').addEventListener('input', function () {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(function () {
+            cargar(this.value.trim());
+        }.bind(this), 300);
+    });
+
+    cargarUnidades();
+    cargar('');
+})();
+</script>
+}

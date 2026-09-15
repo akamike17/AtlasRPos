@@ -39,6 +39,8 @@ public class ProductosController : Controller
             query = query.Where(p =>
                 p.Nombre.Contains(t) ||
                 (p.Descripcion != null && p.Descripcion.Contains(t)) ||
+                (p.Codigo != null && p.Codigo.Contains(t)) ||
+                (p.CodigoBarras != null && p.CodigoBarras.Contains(t)) ||
                 p.CategoriaProducto.Nombre.Contains(t));
         }
 
@@ -49,12 +51,15 @@ public class ProductosController : Controller
                 p.IdProducto,
                 p.IdCategoriaProducto,
                 Categoria = p.CategoriaProducto.Nombre,
+                p.Codigo,
+                p.CodigoBarras,
                 p.Nombre,
                 p.Descripcion,
                 p.Precio,
                 p.Activo,
                 p.FechaCreacion,
-                CantidadImpuestos = p.ProductosImpuestos.Count()
+                CantidadImpuestos = p.ProductosImpuestos.Count(),
+                CantidadRecetas = p.Recetas.Count()
             })
             .ToListAsync();
 
@@ -79,15 +84,29 @@ public class ProductosController : Controller
             }
 
             var nombre = modelo.Nombre.Trim();
+            var codigo = string.IsNullOrWhiteSpace(modelo.Codigo) ? null : modelo.Codigo.Trim();
+            var codigoBarras = string.IsNullOrWhiteSpace(modelo.CodigoBarras) ? null : modelo.CodigoBarras.Trim();
 
             if (await _db.Productos.AnyAsync(p => p.IdCategoriaProducto == modelo.IdCategoriaProducto && p.Nombre == nombre))
             {
                 return JsonError("Ya existe un producto con ese nombre en la categoría seleccionada.");
             }
 
+            if (codigo != null && await _db.Productos.AnyAsync(p => p.Codigo == codigo))
+            {
+                return JsonError("Ya existe un producto con ese código interno.");
+            }
+
+            if (codigoBarras != null && await _db.Productos.AnyAsync(p => p.CodigoBarras == codigoBarras))
+            {
+                return JsonError("Ya existe un producto con ese código de barras.");
+            }
+
             var producto = new Producto
             {
                 IdCategoriaProducto = modelo.IdCategoriaProducto,
+                Codigo = codigo,
+                CodigoBarras = codigoBarras,
                 Nombre = nombre,
                 Descripcion = Normalizar(modelo.Descripcion),
                 Precio = Redondear(modelo.Precio),
@@ -101,6 +120,10 @@ public class ProductosController : Controller
             await _auditoria.RegistrarAsync("Producto", producto.IdProducto.ToString(), "CREAR_PRODUCTO", null, Snapshot(producto));
 
             return JsonOk("Producto creado correctamente.");
+        }
+        catch (DbUpdateException)
+        {
+            return JsonError("Ya existe un producto con ese código o nombre.");
         }
         catch (Exception ex)
         {
@@ -133,6 +156,8 @@ public class ProductosController : Controller
             }
 
             var nombre = modelo.Nombre.Trim();
+            var codigo = string.IsNullOrWhiteSpace(modelo.Codigo) ? null : modelo.Codigo.Trim();
+            var codigoBarras = string.IsNullOrWhiteSpace(modelo.CodigoBarras) ? null : modelo.CodigoBarras.Trim();
 
             if (await _db.Productos.AnyAsync(p =>
                 p.IdCategoriaProducto == modelo.IdCategoriaProducto &&
@@ -142,9 +167,21 @@ public class ProductosController : Controller
                 return JsonError("Ya existe un producto con ese nombre en la categoría seleccionada.");
             }
 
+            if (codigo != null && await _db.Productos.AnyAsync(p => p.Codigo == codigo && p.IdProducto != producto.IdProducto))
+            {
+                return JsonError("Ya existe un producto con ese código interno.");
+            }
+
+            if (codigoBarras != null && await _db.Productos.AnyAsync(p => p.CodigoBarras == codigoBarras && p.IdProducto != producto.IdProducto))
+            {
+                return JsonError("Ya existe un producto con ese código de barras.");
+            }
+
             var anterior = Snapshot(producto);
 
             producto.IdCategoriaProducto = modelo.IdCategoriaProducto;
+            producto.Codigo = codigo;
+            producto.CodigoBarras = codigoBarras;
             producto.Nombre = nombre;
             producto.Descripcion = Normalizar(modelo.Descripcion);
             producto.Precio = Redondear(modelo.Precio);
@@ -154,6 +191,10 @@ public class ProductosController : Controller
             await _auditoria.RegistrarAsync("Producto", producto.IdProducto.ToString(), "ACTUALIZAR_PRODUCTO", anterior, Snapshot(producto));
 
             return JsonOk("Producto actualizado correctamente.");
+        }
+        catch (DbUpdateException)
+        {
+            return JsonError("Ya existe un producto con ese código o nombre.");
         }
         catch (Exception ex)
         {
@@ -301,6 +342,7 @@ public class ProductosController : Controller
                 IdProducto = modelo.IdProducto,
                 IdImpuesto = modelo.IdImpuesto
             });
+
             await _db.SaveChangesAsync();
 
             await _auditoria.RegistrarAsync(
@@ -308,13 +350,9 @@ public class ProductosController : Controller
                 $"{modelo.IdProducto}:{modelo.IdImpuesto}",
                 "ASIGNAR_IMPUESTO",
                 null,
-                new { IdProducto = modelo.IdProducto, IdImpuesto = modelo.IdImpuesto });
+                new { IdProducto = modelo.IdProducto, IdImpuesto = modelo.IdImpuesto, Impuesto = impuesto.Nombre });
 
             return JsonOk("Impuesto asignado correctamente.");
-        }
-        catch (DbUpdateException)
-        {
-            return JsonError("Este impuesto ya está asignado al producto.");
         }
         catch (Exception ex)
         {
@@ -334,15 +372,27 @@ public class ProductosController : Controller
                 return JsonError("Datos inválidos.");
             }
 
-            var vinculo = await _db.ProductosImpuestos
-                .FirstOrDefaultAsync(pi => pi.IdProducto == modelo.IdProducto && pi.IdImpuesto == modelo.IdImpuesto);
-
-            if (vinculo is null)
+            var idEmpresa = ObtenerClaimInt("IdEmpresa");
+            if (idEmpresa is null)
             {
-                return JsonError("El impuesto no está asignado al producto.");
+                return JsonError("No se pudo identificar tu empresa.");
             }
 
-            _db.ProductosImpuestos.Remove(vinculo);
+            var rel = await _db.ProductosImpuestos
+                .Include(pi => pi.Impuesto)
+                .FirstOrDefaultAsync(pi => pi.IdProducto == modelo.IdProducto && pi.IdImpuesto == modelo.IdImpuesto);
+
+            if (rel is null)
+            {
+                return JsonError("La asignación de impuesto no existe.");
+            }
+
+            if (rel.Impuesto.IdEmpresa != idEmpresa)
+            {
+                return JsonError("El impuesto no pertenece a tu empresa.");
+            }
+
+            _db.ProductosImpuestos.Remove(rel);
             await _db.SaveChangesAsync();
 
             await _auditoria.RegistrarAsync(
@@ -380,6 +430,16 @@ public class ProductosController : Controller
             return "El nombre no debe contener espacios al inicio o al final.";
         }
 
+        if (modelo.Codigo != null && modelo.Codigo.Trim().Length > 50)
+        {
+            return "El código interno no debe superar 50 caracteres.";
+        }
+
+        if (modelo.CodigoBarras != null && modelo.CodigoBarras.Trim().Length > 50)
+        {
+            return "El código de barras no debe superar 50 caracteres.";
+        }
+
         if (modelo.Descripcion != null && modelo.Descripcion.Trim().Length > 500)
         {
             return "La descripción no debe superar 500 caracteres.";
@@ -411,7 +471,9 @@ public class ProductosController : Controller
 
     private static object Snapshot(Producto p) => new
     {
-        IdCategoriaProducto = p.IdCategoriaProducto,
+        p.IdCategoriaProducto,
+        p.Codigo,
+        p.CodigoBarras,
         p.Nombre,
         p.Descripcion,
         p.Precio,

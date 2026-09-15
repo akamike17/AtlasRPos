@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using AtlasRestaurantPOS.Web.Models;
 
 namespace AtlasRestaurantPOS.Web.Data;
@@ -31,6 +31,12 @@ public class AtlasRestaurantDbContext : DbContext
     public DbSet<MetodoPago> MetodosPago => Set<MetodoPago>();
     public DbSet<FolioSecuencia> FoliosSecuencia => Set<FolioSecuencia>();
     public DbSet<Auditoria> Auditorias => Set<Auditoria>();
+    public DbSet<UnidadMedida> UnidadesMedida => Set<UnidadMedida>();
+    public DbSet<Insumo> Insumos => Set<Insumo>();
+    public DbSet<ExistenciaInsumo> ExistenciasInsumo => Set<ExistenciaInsumo>();
+    public DbSet<RecetaProducto> RecetasProducto => Set<RecetaProducto>();
+    public DbSet<MovimientoInventario> MovimientosInventario => Set<MovimientoInventario>();
+    public DbSet<SecuenciasCodigo> SecuenciasCodigo => Set<SecuenciasCodigo>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -57,6 +63,12 @@ public class AtlasRestaurantDbContext : DbContext
         ConfigureMetodoPago(modelBuilder);
         ConfigureFolioSecuencia(modelBuilder);
         ConfigureAuditoria(modelBuilder);
+        ConfigureUnidadMedida(modelBuilder);
+        ConfigureInsumo(modelBuilder);
+        ConfigureExistenciaInsumo(modelBuilder);
+        ConfigureRecetaProducto(modelBuilder);
+        ConfigureMovimientoInventario(modelBuilder);
+        ConfigureSecuenciasCodigo(modelBuilder);
     }
 
     private static void ConfigureEmpresa(ModelBuilder modelBuilder)
@@ -277,6 +289,12 @@ public class AtlasRestaurantDbContext : DbContext
                 .WithOne(x => x.Producto)
                 .HasForeignKey(x => x.IdProducto)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            e.Property(x => x.Codigo).HasMaxLength(50).UseCollation("utf8mb4_bin");
+            e.Property(x => x.CodigoBarras).HasMaxLength(50).UseCollation("utf8mb4_bin");
+
+            e.HasIndex(x => x.Codigo).IsUnique();
+            e.HasIndex(x => x.CodigoBarras).IsUnique();
         });
     }
 
@@ -571,6 +589,198 @@ public class AtlasRestaurantDbContext : DbContext
                 .WithMany(x => x.Auditorias)
                 .HasForeignKey(x => x.IdUsuario)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+    }
+
+    private static void ConfigureUnidadMedida(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<UnidadMedida>(e =>
+        {
+            e.HasKey(x => x.IdUnidadMedida);
+            e.Property(x => x.Codigo)
+               .IsRequired()
+               .HasMaxLength(20)
+               .UseCollation("utf8mb4_bin")
+               .HasColumnType("varchar(20)");
+            e.Property(x => x.Nombre).IsRequired().HasMaxLength(100);
+            e.Property(x => x.FechaCreacion).HasColumnType("datetime(6)");
+
+            e.HasIndex(x => new { x.IdEmpresa, x.Codigo }).IsUnique();
+
+            e.HasOne(x => x.Empresa)
+               .WithMany()
+               .HasForeignKey(x => x.IdEmpresa)
+               .OnDelete(DeleteBehavior.Restrict)
+               .IsRequired();
+
+            e.ToTable("UnidadesMedida");
+        });
+    }
+
+    private static void ConfigureInsumo(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Insumo>(e =>
+        {
+            e.HasKey(x => x.IdInsumo);
+            e.Property(x => x.Codigo)
+               .HasMaxLength(50)
+               .UseCollation("utf8mb4_bin")
+               .HasColumnType("varchar(50)");
+            e.Property(x => x.CodigoBarras)
+               .HasMaxLength(50)
+               .UseCollation("utf8mb4_bin")
+               .HasColumnType("varchar(50)");
+            e.Property(x => x.Nombre).IsRequired().HasMaxLength(150);
+            e.Property(x => x.CostoReferencia).HasPrecision(18, 2).HasDefaultValue(0m);
+            e.Property(x => x.StockMinimo).HasPrecision(18, 3).HasDefaultValue(0m);
+            e.Property(x => x.FechaCreacion).HasColumnType("datetime(6)");
+
+            e.HasIndex(x => new { x.IdEmpresa, x.Codigo }).IsUnique();
+            e.HasIndex(x => new { x.IdEmpresa, x.CodigoBarras }).IsUnique();
+            e.HasIndex(x => x.IdUnidadMedida);
+            e.HasIndex(x => x.Nombre);
+
+            e.HasOne(x => x.Empresa)
+               .WithMany()
+               .HasForeignKey(x => x.IdEmpresa)
+               .OnDelete(DeleteBehavior.Restrict)
+               .IsRequired();
+
+            e.HasOne(x => x.UnidadMedida)
+               .WithMany(x => x.Insumos)
+               .HasForeignKey(x => x.IdUnidadMedida)
+               .OnDelete(DeleteBehavior.Restrict)
+               .IsRequired();
+
+            e.ToTable("Insumos");
+        });
+    }
+
+    private static void ConfigureExistenciaInsumo(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<ExistenciaInsumo>(e =>
+        {
+            e.HasKey(x => new { x.IdSucursal, x.IdInsumo });
+            e.Property(x => x.CantidadActual).HasPrecision(18, 3).HasDefaultValue(0m);
+            e.Property(x => x.FechaModificacion).HasColumnType("datetime(6)");
+
+            e.HasOne(x => x.Insumo)
+               .WithMany(x => x.Existencias)
+               .HasForeignKey(x => x.IdInsumo)
+               .OnDelete(DeleteBehavior.Restrict)
+               .IsRequired();
+
+            e.HasOne(x => x.Sucursal)
+               .WithMany()
+               .HasForeignKey(x => x.IdSucursal)
+               .OnDelete(DeleteBehavior.Restrict)
+               .IsRequired();
+
+            e.ToTable("ExistenciasInsumo");
+        });
+    }
+
+    private static void ConfigureRecetaProducto(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<RecetaProducto>(e =>
+        {
+            e.HasKey(x => x.IdRecetaProducto);
+            e.Property(x => x.Cantidad).HasPrecision(18, 3);
+
+            e.HasIndex(x => new { x.IdProducto, x.IdInsumo }).IsUnique();
+            e.HasIndex(x => x.IdInsumo);
+
+            e.HasOne(x => x.Producto)
+               .WithMany(x => x.Recetas)
+               .HasForeignKey(x => x.IdProducto)
+               .OnDelete(DeleteBehavior.Restrict)
+               .IsRequired();
+
+            e.HasOne(x => x.Insumo)
+               .WithMany(x => x.Recetas)
+               .HasForeignKey(x => x.IdInsumo)
+               .OnDelete(DeleteBehavior.Restrict)
+               .IsRequired();
+
+            e.ToTable("RecetasProducto");
+        });
+    }
+
+    private static void ConfigureMovimientoInventario(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MovimientoInventario>(e =>
+        {
+            e.HasKey(x => x.IdMovimientoInventario);
+            e.Property(x => x.Tipo).IsRequired().HasMaxLength(50);
+            e.Property(x => x.Cantidad).HasPrecision(18, 3);
+            e.Property(x => x.ExistenciaAnterior).HasPrecision(18, 3);
+            e.Property(x => x.ExistenciaNueva).HasPrecision(18, 3);
+            e.Property(x => x.CostoUnitario).HasPrecision(18, 2);
+            e.Property(x => x.Concepto).IsRequired().HasMaxLength(500);
+            e.Property(x => x.FechaMovimiento).HasColumnType("datetime(6)");
+
+            e.HasIndex(x => new { x.IdInsumo, x.FechaMovimiento });
+            e.HasIndex(x => new { x.IdSucursal, x.FechaMovimiento });
+            e.HasIndex(x => x.IdComanda);
+            e.HasIndex(x => x.IdUsuario);
+            e.HasIndex(x => x.IdCaja);
+            e.HasIndex(x => x.IdSesionCaja);
+            e.HasIndex(x => x.IdComandaDetalle);
+
+            e.HasOne(x => x.Insumo)
+               .WithMany(x => x.Movimientos)
+               .HasForeignKey(x => x.IdInsumo)
+               .OnDelete(DeleteBehavior.Restrict)
+               .IsRequired();
+
+            e.HasOne(x => x.Sucursal)
+               .WithMany()
+               .HasForeignKey(x => x.IdSucursal)
+               .OnDelete(DeleteBehavior.Restrict)
+               .IsRequired();
+
+            e.HasOne(x => x.Usuario)
+               .WithMany()
+               .HasForeignKey(x => x.IdUsuario)
+               .OnDelete(DeleteBehavior.Restrict)
+               .IsRequired();
+
+            e.HasOne(x => x.Comanda)
+               .WithMany()
+               .HasForeignKey(x => x.IdComanda)
+               .OnDelete(DeleteBehavior.Restrict);
+
+            e.HasOne(x => x.ComandaDetalle)
+               .WithMany()
+               .HasForeignKey(x => x.IdComandaDetalle)
+               .OnDelete(DeleteBehavior.Restrict);
+
+            e.HasOne(x => x.Caja)
+               .WithMany()
+               .HasForeignKey(x => x.IdCaja)
+               .OnDelete(DeleteBehavior.Restrict);
+
+            e.HasOne(x => x.SesionCaja)
+               .WithMany()
+               .HasForeignKey(x => x.IdSesionCaja)
+               .OnDelete(DeleteBehavior.Restrict);
+
+            e.ToTable("MovimientosInventario");
+        });
+    }
+
+    private static void ConfigureSecuenciasCodigo(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<SecuenciasCodigo>(e =>
+        {
+            e.HasKey(x => x.IdSecuenciaCodigo);
+            e.Property(x => x.TipoEntidad).IsRequired().HasMaxLength(50);
+            e.Property(x => x.Prefijo).HasMaxLength(20);
+            e.Property(x => x.Longitud).HasDefaultValue(0);
+            e.Property(x => x.UltimoNumero).HasDefaultValue(0L);
+            e.Property(x => x.FechaModificacion).HasColumnType("datetime(6)");
+            e.HasIndex(x => new { x.IdEmpresa, x.TipoEntidad }).IsUnique();
+            e.ToTable("SecuenciasCodigo");
         });
     }
 }

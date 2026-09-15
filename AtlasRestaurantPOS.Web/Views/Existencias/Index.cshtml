@@ -1,0 +1,233 @@
+@{
+    ViewData["Title"] = "Existencias de Inventario";
+}
+
+@Html.AntiForgeryToken()
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h1 class="h4 mb-0">Existencias de Inventario</h1>
+        <small class="text-muted">Consulta de stock actual por sucursal e insumo</small>
+    </div>
+    <div>
+        <a asp-controller="MovimientosInventario" asp-action="Index" class="btn btn-outline-primary">
+            <i class="bi bi-arrow-left-right"></i> Registrar Movimiento
+        </a>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card shadow-sm border-0 bg-light">
+            <div class="card-body">
+                <div class="text-muted small">Total Registros</div>
+                <div class="h3 mb-0" id="stat-total">0</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow-sm border-0 bg-light">
+            <div class="card-body">
+                <div class="text-muted small">Stock Normal</div>
+                <div class="h3 mb-0 text-success" id="stat-normal">0</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card shadow-sm border-0 bg-light">
+            <div class="card-body">
+                <div class="text-muted small">Bajo Stock Mínimo</div>
+                <div class="h3 mb-0 text-danger" id="stat-bajo">0</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+    <div class="card-body">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-4">
+                <label for="filtroSucursal" class="form-label small text-muted">Sucursal</label>
+                <select id="filtroSucursal" class="form-select">
+                    <option value="">Todas las sucursales</option>
+                </select>
+            </div>
+            <div class="col-md-5">
+                <label for="buscar" class="form-label small text-muted">Buscar Insumo</label>
+                <input type="text" id="buscar" class="form-control" placeholder="Nombre, código o código de barras..." />
+            </div>
+            <div class="col-md-3">
+                <div class="form-check form-switch mt-2">
+                    <input class="form-check-input" type="checkbox" role="switch" id="filtroBajoStock">
+                    <label class="form-check-label" for="filtroBajoStock">Solo bajo stock</label>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="table-responsive">
+    <table class="table table-hover align-middle">
+        <thead class="table-light">
+            <tr>
+                <th>Sucursal</th>
+                <th>Código</th>
+                <th>Insumo</th>
+                <th class="text-end">Stock Actual</th>
+                <th class="text-end">Stock Mínimo</th>
+                <th>Unidad</th>
+                <th class="text-center">Estado</th>
+                <th>Última Modificación</th>
+            </tr>
+        </thead>
+        <tbody id="tabla-existencias">
+            <tr>
+                <td colspan="8" class="text-center text-muted py-4">Cargando existencias...</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+@await Html.PartialAsync("_Toast")
+
+@section Scripts {
+<script>
+(function () {
+    const token = document.querySelector('input[name="__RequestVerificationToken"]')?.value || '';
+    const tabla = document.getElementById('tabla-existencias');
+    const inputBuscar = document.getElementById('buscar');
+    const selectSucursal = document.getElementById('filtroSucursal');
+    const checkBajoStock = document.getElementById('filtroBajoStock');
+
+    const statTotal = document.getElementById('stat-total');
+    const statNormal = document.getElementById('stat-normal');
+    const statBajo = document.getElementById('stat-bajo');
+
+    let debounceTimer = null;
+
+    function escapeHtml(texto) {
+        if (!texto) return '';
+        return String(texto)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function formatearCantidad(valor) {
+        if (valor === null || valor === undefined) return '0.000';
+        return Number(valor).toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+    }
+
+    function formatearFecha(iso) {
+        if (!iso) return '-';
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return '-';
+        return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    async function cargarCatalogos() {
+        try {
+            const res = await fetch('@Url.Action("ObtenerCatalogos", "Existencias")', {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            });
+            const data = await res.json();
+            if (data.ok && Array.isArray(data.sucursales)) {
+                selectSucursal.innerHTML = '<option value="">Todas las sucursales</option>';
+                data.sucursales.forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s.idSucursal;
+                    opt.textContent = s.nombre;
+                    selectSucursal.appendChild(opt);
+                });
+            }
+        } catch (err) {
+            console.error('Error cargando catálogos de sucursales:', err);
+        }
+    }
+
+    async function cargarExistencias() {
+        const idSucursal = selectSucursal.value;
+        const termino = inputBuscar.value.trim();
+        const soloBajoStock = checkBajoStock.checked;
+
+        const params = new URLSearchParams();
+        if (idSucursal) params.append('idSucursal', idSucursal);
+        if (termino) params.append('termino', termino);
+        if (soloBajoStock) params.append('soloBajoStock', 'true');
+
+        try {
+            const res = await fetch(`@Url.Action("Buscar", "Existencias")?${params.toString()}`, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            });
+            const lista = await res.json();
+
+            if (!Array.isArray(lista)) {
+                tabla.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-4">Error al cargar existencias.</td></tr>';
+                return;
+            }
+
+            if (lista.length === 0) {
+                tabla.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">No se encontraron existencias con los filtros aplicados.</td></tr>';
+                statTotal.textContent = '0';
+                statNormal.textContent = '0';
+                statBajo.textContent = '0';
+                return;
+            }
+
+            let bajoCount = 0;
+            let normalCount = 0;
+
+            const html = lista.map(e => {
+                if (e.bajoStock) bajoCount++;
+                else normalCount++;
+
+                const estadoBadge = e.bajoStock
+                    ? '<span class="badge bg-danger-subtle text-danger border border-danger-subtle">Bajo Stock</span>'
+                    : '<span class="badge bg-success-subtle text-success border border-success-subtle">Normal</span>';
+
+                const codigos = [];
+                if (e.codigo) codigos.push(`<span class="font-monospace text-dark">${escapeHtml(e.codigo)}</span>`);
+                if (e.codigoBarras) codigos.push(`<small class="text-muted d-block"><i class="bi bi-upc-scan"></i> ${escapeHtml(e.codigoBarras)}</small>`);
+                const codigoHtml = codigos.length > 0 ? codigos.join('') : '<span class="text-muted">-</span>';
+
+                return `
+                    <tr>
+                        <td class="fw-semibold">${escapeHtml(e.sucursal)}</td>
+                        <td>${codigoHtml}</td>
+                        <td>
+                            <span class="fw-bold">${escapeHtml(e.insumo)}</span>
+                        </td>
+                        <td class="text-end font-monospace fw-bold ${e.bajoStock ? 'text-danger' : 'text-dark'}">${formatearCantidad(e.cantidadActual)}</td>
+                        <td class="text-end font-monospace text-muted">${formatearCantidad(e.stockMinimo)}</td>
+                        <td><span class="badge bg-light text-secondary border">${escapeHtml(e.unidadCodigo || e.unidad || '-')}</span></td>
+                        <td class="text-center">${estadoBadge}</td>
+                        <td class="text-muted small">${formatearFecha(e.fechaModificacion)}</td>
+                    </tr>
+                `;
+            }).join('');
+
+            tabla.innerHTML = html;
+            statTotal.textContent = lista.length;
+            statNormal.textContent = normalCount;
+            statBajo.textContent = bajoCount;
+
+        } catch (err) {
+            console.error('Error cargando existencias:', err);
+            tabla.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-4">Error al consultar el servidor.</td></tr>';
+        }
+    }
+
+    inputBuscar.addEventListener('input', () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(cargarExistencias, 300);
+    });
+
+    selectSucursal.addEventListener('change', cargarExistencias);
+    checkBajoStock.addEventListener('change', cargarExistencias);
+
+    cargarCatalogos().then(cargarExistencias);
+})();
+</script>
+}

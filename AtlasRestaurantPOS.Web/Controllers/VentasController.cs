@@ -1,4 +1,4 @@
-using System.Data;
+﻿using System.Data;
 using System.Security.Claims;
 using AtlasRestaurantPOS.Web.Constants;
 using AtlasRestaurantPOS.Web.Data;
@@ -288,6 +288,42 @@ public class VentasController : Controller
                     return JsonError("El producto no existe o está inactivo.");
                 }
 
+                // Validar stock por receta antes de agregar (incluye existencias actuales de la comanda)
+                // Identificar sucursal operativa
+                var idSucursal = ObtenerClaimInt("IdSucursal");
+                if (idSucursal is null)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("No se pudo identificar tu sucursal.");
+                }
+
+                // Validar stock proyectado de la comanda (determinista por IdInsumo)
+                var idSucursalVal = ObtenerClaimInt("IdSucursal");
+                if (idSucursalVal is null)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("No se pudo identificar tu sucursal.");
+                }
+
+                var listaProductos = await _db.ComandaDetalles
+                    .Where(d => d.IdComanda == comanda.IdComanda)
+                    .Select(d => new { d.IdProducto, d.Cantidad })
+                    .AsNoTracking()
+                    .ToListAsync();
+
+                var listaModificada = listaProductos
+                    .Select(p => (IdProducto: p.IdProducto, Cantidad: p.Cantidad))
+                    .ToList();
+
+                listaModificada.Add((producto.IdProducto, modelo.Cantidad));
+
+                var valido = await ValidarStockProyectadoAsync(listaModificada, idSucursalVal.Value);
+                if (!valido.ok)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError(valido.mensaje);
+                }
+
                 var detalle = new ComandaDetalle
                 {
                     IdComanda = comanda.IdComanda,
@@ -385,6 +421,33 @@ public class VentasController : Controller
                 {
                     await tx.RollbackAsync();
                     return JsonError("La partida no existe en esta comanda.");
+                }
+
+                // Validar stock proyectado de la comanda (determinista por IdInsumo)
+                var idSucursalVal = ObtenerClaimInt("IdSucursal");
+                if (idSucursalVal is null)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("No se pudo identificar tu sucursal.");
+                }
+
+                var detallesExistentes = await _db.ComandaDetalles
+                    .Where(d => d.IdComanda == modelo.IdComanda && d.IdComandaDetalle != modelo.IdComandaDetalle)
+                    .Select(d => new { d.IdProducto, d.Cantidad })
+                    .AsNoTracking()
+                    .ToListAsync();
+
+                var listaModificada = detallesExistentes
+                    .Select(p => (IdProducto: p.IdProducto, Cantidad: p.Cantidad))
+                    .ToList();
+
+                listaModificada.Add((detalle.IdProducto, modelo.Cantidad));
+
+                var valido = await ValidarStockProyectadoAsync(listaModificada, idSucursalVal.Value);
+                if (!valido.ok)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError(valido.mensaje);
                 }
 
                 var anterior = new { detalle.Cantidad, detalle.Notas };
@@ -627,6 +690,14 @@ public class VentasController : Controller
 
                 if (comandaCerrada)
                 {
+                    // Consumir inventario atómicamente antes de cerrar la comanda.
+                    var consumo = await ConsumirInventarioComandaAsync(comanda, idSucursal.Value, idCaja.Value, idSesion.Value, idUsuario.Value);
+                    if (!consumo.ok)
+                    {
+                        await tx.RollbackAsync();
+                        return JsonError(consumo.mensaje);
+                    }
+
                     comanda.Estado = EstadosComanda.CERRADA;
                     comanda.FechaCierre = DateTime.Now;
                     await _db.SaveChangesAsync();
@@ -1164,6 +1235,67 @@ public class VentasController : Controller
         return (idUsuario, idCaja, idSesion);
     }
 
+    // Valida el stock proyectado para una lista de (IdProducto, Cantidad) en una sucursal.
+    // No modifica existencias; bloquea ExistenciasInsumo con SELECT ... FOR UPDATE en orden por IdInsumo.
+    // Retorna (ok:true) si hay stock suficiente, o (false, mensaje) si falta stock.
+    private async Task<(bool ok, string mensaje)> ValidarStockProyectadoAsync(IEnumerable<(int IdProducto, decimal Cantidad)> productos, int idSucursal)
+    {
+        var lista = productos.ToList();
+        if (!lista.Any()) return (true, string.Empty);
+
+        var productoIds = lista.Select(p => p.IdProducto).Distinct().ToList();
+
+        var recetas = await _db.RecetasProducto
+            .Where(r => productoIds.Contains(r.IdProducto))
+            .AsNoTracking()
+            .ToListAsync();
+
+        var requeridos = new Dictionary<int, decimal>(); // IdInsumo -> cantidad requerida
+
+        foreach (var p in lista)
+        {
+            var recetasProducto = recetas.Where(r => r.IdProducto == p.IdProducto);
+            foreach (var r in recetasProducto)
+            {
+                var req = p.Cantidad * r.Cantidad;
+                if (requeridos.ContainsKey(r.IdInsumo)) requeridos[r.IdInsumo] += req;
+                else requeridos[r.IdInsumo] = req;
+            }
+        }
+
+        if (!requeridos.Any()) return (true, string.Empty);
+
+        foreach (var kv in requeridos.OrderBy(k => k.Key))
+        {
+            var idInsumo = kv.Key;
+            var cantidadNecesaria = kv.Value;
+
+            var existencia = await _db.ExistenciasInsumo
+                .FromSqlRaw("SELECT * FROM ExistenciasInsumo WHERE IdSucursal = {0} AND IdInsumo = {1} FOR UPDATE", idSucursal, idInsumo)
+                .FirstOrDefaultAsync();
+
+            if (existencia is null)
+            {
+                return (false, $"Stock insuficiente para insumo {idInsumo}: no existe existencia en sucursal {idSucursal}.");
+            }
+
+            if (existencia.CantidadActual < cantidadNecesaria)
+            {
+                // Nombre de insumo no disponible por navegación; obtenerlo de manera segura.
+                var nombreInsumo = await _db.Insumos
+                    .AsNoTracking()
+                    .Where(i => i.IdInsumo == idInsumo)
+                    .Select(i => i.Nombre)
+                    .FirstOrDefaultAsync();
+
+                var displayName = string.IsNullOrWhiteSpace(nombreInsumo) ? $"Id {idInsumo}" : nombreInsumo;
+                return (false, $"Stock insuficiente para insumo {displayName}: necesita {cantidadNecesaria:0.###}, disponible {existencia.CantidadActual:0.###}.");
+            }
+        }
+
+        return (true, string.Empty);
+    }
+
     private int? ObtenerIdUsuario()
     {
         var valor = User.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -1206,4 +1338,86 @@ public class VentasController : Controller
     {
         return ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage).FirstOrDefault() ?? "Datos inválidos.";
     }
+
+    private async Task<(bool ok, string mensaje)> ConsumirInventarioComandaAsync(Comanda comanda, int idSucursal, int idCaja, long idSesion, int idUsuario)
+    {
+        var detalles = await _db.ComandaDetalles
+            .Where(d => d.IdComanda == comanda.IdComanda)
+            .AsNoTracking()
+            .ToListAsync();
+
+        if (!detalles.Any()) return (true, string.Empty);
+
+        var productoIds = detalles.Select(d => d.IdProducto).Distinct().ToList();
+        var recetas = await _db.RecetasProducto
+            .Where(r => productoIds.Contains(r.IdProducto))
+            .AsNoTracking()
+            .ToListAsync();
+
+        var requeridos = new Dictionary<int, decimal>();
+        foreach (var d in detalles)
+        {
+            var recetasProducto = recetas.Where(r => r.IdProducto == d.IdProducto);
+            foreach (var r in recetasProducto)
+            {
+                var req = d.Cantidad * r.Cantidad;
+                if (requeridos.ContainsKey(r.IdInsumo)) requeridos[r.IdInsumo] += req;
+                else requeridos[r.IdInsumo] = req;
+            }
+        }
+
+        if (!requeridos.Any()) return (true, string.Empty);
+
+        foreach (var kv in requeridos.OrderBy(k => k.Key))
+        {
+            var idInsumo = kv.Key;
+            var cantidadNecesaria = kv.Value;
+
+            var existencia = await _db.ExistenciasInsumo
+                .FromSqlRaw("SELECT * FROM ExistenciasInsumo WHERE IdSucursal = {0} AND IdInsumo = {1} FOR UPDATE", idSucursal, idInsumo)
+                .FirstOrDefaultAsync();
+
+            if (existencia is null)
+            {
+                return (false, $"Stock insuficiente para insumo {idInsumo}: no existe existencia en sucursal {idSucursal}.");
+            }
+
+            var anterior = existencia.CantidadActual;
+            var nueva = anterior - cantidadNecesaria;
+
+            if (nueva < 0)
+            {
+                return (false, $"Stock insuficiente para insumo {idInsumo}: necesita {cantidadNecesaria}, disponible {anterior}.");
+            }
+
+            existencia.CantidadActual = nueva;
+            existencia.FechaModificacion = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+
+            var movimiento = new MovimientoInventario
+            {
+                IdSucursal = idSucursal,
+                IdInsumo = idInsumo,
+                IdUsuario = idUsuario,
+                IdComanda = comanda.IdComanda,
+                Tipo = TiposMovimientoInventario.VENTA,
+                Cantidad = cantidadNecesaria,
+                ExistenciaAnterior = anterior,
+                ExistenciaNueva = nueva,
+                CostoUnitario = null,
+                Concepto = $"Consumo por venta comanda {comanda.IdComanda}",
+                FechaMovimiento = DateTime.Now,
+                IdCaja = idCaja,
+                IdSesionCaja = idSesion
+            };
+
+            _db.MovimientosInventario.Add(movimiento);
+            await _db.SaveChangesAsync();
+
+            await _auditoria.RegistrarAsync("MovimientoInventario", movimiento.IdMovimientoInventario.ToString(), "CONSUMO_VENTA", new { movimiento.IdSucursal, movimiento.IdInsumo, movimiento.Cantidad, movimiento.ExistenciaAnterior }, new { movimiento.ExistenciaNueva });
+        }
+
+        return (true, string.Empty);
+    }
 }
+

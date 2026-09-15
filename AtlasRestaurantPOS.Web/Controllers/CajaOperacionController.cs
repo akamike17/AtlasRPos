@@ -38,7 +38,8 @@ public class CajaOperacionController : Controller
     {
         var idUsuario = ObtenerIdUsuario();
         var idSucursal = ObtenerClaimInt("IdSucursal");
-        if (idUsuario is null || idSucursal is null)
+        var idEmpresa = ObtenerClaimInt("IdEmpresa");
+        if (idUsuario is null || idSucursal is null || idEmpresa is null)
         {
             return RedirectToAction("Login", "Acceso");
         }
@@ -52,7 +53,9 @@ public class CajaOperacionController : Controller
                     sc.IdCaja == idCajaActual &&
                     sc.IdSesionCaja == idSesionActual &&
                     sc.Estado == EstadosSesionCaja.ABIERTA &&
-                    sc.IdUsuarioApertura == idUsuario);
+                    sc.IdUsuarioApertura == idUsuario &&
+                    sc.Caja.IdSucursal == idSucursal &&
+                    sc.Caja.Sucursal.IdEmpresa == idEmpresa);
 
             if (valida)
             {
@@ -66,6 +69,7 @@ public class CajaOperacionController : Controller
             .AsNoTracking()
             .Where(c =>
                 c.IdSucursal == idSucursal &&
+                c.Sucursal.IdEmpresa == idEmpresa &&
                 c.Activo &&
                 c.Sucursal.Activo &&
                 c.Sucursal.Empresa.Activo)
@@ -116,7 +120,9 @@ public class CajaOperacionController : Controller
         var idUsuario = ObtenerIdUsuario();
         var idCaja = ObtenerClaimInt(ClaimIdCaja);
         var idSesion = ObtenerClaimLong(ClaimIdSesionCaja);
-        if (idUsuario is null || idCaja is null || idSesion is null)
+        var idSucursal = ObtenerClaimInt("IdSucursal");
+        var idEmpresa = ObtenerClaimInt("IdEmpresa");
+        if (idUsuario is null || idCaja is null || idSesion is null || idSucursal is null || idEmpresa is null)
         {
             return RedirectToAction("Seleccionar");
         }
@@ -129,7 +135,9 @@ public class CajaOperacionController : Controller
                 sc.IdCaja == idCaja &&
                 sc.IdUsuarioApertura == idUsuario);
 
-        if (sesion is null || sesion.Estado != EstadosSesionCaja.ABIERTA)
+        if (sesion is null || sesion.Estado != EstadosSesionCaja.ABIERTA ||
+            sesion.Caja.IdSucursal != idSucursal ||
+            sesion.Caja.Sucursal.IdEmpresa != idEmpresa)
         {
             await QuitarClaimsOperativosAsync();
             return RedirectToAction("Seleccionar");
@@ -165,6 +173,11 @@ public class CajaOperacionController : Controller
     {
         try
         {
+            if (modelo is null)
+            {
+                return RedirectConError("Los datos de apertura son inválidos.");
+            }
+
             if (!ModelState.IsValid)
             {
                 return RedirectConError("Los datos de apertura son inválidos.");
@@ -172,7 +185,8 @@ public class CajaOperacionController : Controller
 
             var idUsuario = ObtenerIdUsuario();
             var idSucursal = ObtenerClaimInt("IdSucursal");
-            if (idUsuario is null || idSucursal is null)
+            var idEmpresa = ObtenerClaimInt("IdEmpresa");
+            if (idUsuario is null || idSucursal is null || idEmpresa is null)
             {
                 return RedirectToAction("Login", "Acceso");
             }
@@ -203,6 +217,12 @@ public class CajaOperacionController : Controller
                     return RedirectConError("La sucursal de la caja está inactiva.");
                 }
 
+                if (sucursal.IdEmpresa != idEmpresa)
+                {
+                    await tx.RollbackAsync();
+                    return RedirectConError("La caja no pertenece a tu empresa.");
+                }
+
                 if (sucursal.Empresa is null || !sucursal.Empresa.Activo)
                 {
                     await tx.RollbackAsync();
@@ -214,6 +234,12 @@ public class CajaOperacionController : Controller
                 {
                     await tx.RollbackAsync();
                     return RedirectConError("El usuario no está activo.");
+                }
+
+                if (usuario.IdEmpresa != idEmpresa)
+                {
+                    await tx.RollbackAsync();
+                    return RedirectConError("El usuario no pertenece a la empresa.");
                 }
 
                 var yaAbierta = await _db.SesionesCaja
@@ -278,7 +304,8 @@ public class CajaOperacionController : Controller
         {
             var idUsuario = ObtenerIdUsuario();
             var idSucursal = ObtenerClaimInt("IdSucursal");
-            if (idUsuario is null || idSucursal is null)
+            var idEmpresa = ObtenerClaimInt("IdEmpresa");
+            if (idUsuario is null || idSucursal is null || idEmpresa is null)
             {
                 return RedirectToAction("Login", "Acceso");
             }
@@ -290,6 +317,7 @@ public class CajaOperacionController : Controller
             if (caja is null) return RedirectConError("La caja no existe.");
             if (!caja.Activo) return RedirectConError("La caja está inactiva.");
             if (caja.IdSucursal != idSucursal) return RedirectConError("La caja no pertenece a tu sucursal.");
+            if (caja.Sucursal?.IdEmpresa != idEmpresa) return RedirectConError("La caja no pertenece a tu empresa.");
             if (caja.Sucursal is null || !caja.Sucursal.Activo || caja.Sucursal.Empresa is null || !caja.Sucursal.Empresa.Activo)
             {
                 return RedirectConError("La sucursal o empresa de la caja está inactiva.");
@@ -309,6 +337,11 @@ public class CajaOperacionController : Controller
             if (usuario is null || !usuario.Activo)
             {
                 return RedirectConError("El usuario no está activo.");
+            }
+
+            if (usuario.IdEmpresa != idEmpresa)
+            {
+                return RedirectConError("El usuario no pertenece a la empresa.");
             }
 
             await _auditoria.RegistrarAsync(
@@ -347,6 +380,11 @@ public class CajaOperacionController : Controller
     {
         try
         {
+            if (modelo is null)
+            {
+                return JsonError("Datos inválidos.");
+            }
+
             if (!ModelState.IsValid)
             {
                 return JsonError(ErrorModelState());
@@ -355,7 +393,9 @@ public class CajaOperacionController : Controller
             var idUsuario = ObtenerIdUsuario();
             var idCaja = ObtenerClaimInt(ClaimIdCaja);
             var idSesion = ObtenerClaimLong(ClaimIdSesionCaja);
-            if (idUsuario is null || idCaja is null || idSesion is null)
+            var idSucursal = ObtenerClaimInt("IdSucursal");
+            var idEmpresa = ObtenerClaimInt("IdEmpresa");
+            if (idUsuario is null || idCaja is null || idSesion is null || idSucursal is null || idEmpresa is null)
             {
                 return JsonError("No tienes una sesión de caja activa.");
             }
@@ -370,11 +410,17 @@ public class CajaOperacionController : Controller
             {
                 var sesion = await _db.SesionesCaja
                     .FromSqlRaw("SELECT * FROM SesionesCaja WHERE IdSesionCaja = {0} AND IdCaja = {1} FOR UPDATE", idSesion, idCaja)
+                    .Include(sc => sc.Caja).ThenInclude(c => c.Sucursal)
                     .FirstOrDefaultAsync();
 
                 if (sesion is null) { await tx.RollbackAsync(); return JsonError("La sesión de caja no existe."); }
                 if (sesion.Estado != EstadosSesionCaja.ABIERTA) { await tx.RollbackAsync(); return JsonError("La sesión de caja no está abierta."); }
                 if (sesion.IdUsuarioApertura != idUsuario) { await tx.RollbackAsync(); return JsonError("No tienes permiso sobre esta sesión."); }
+                if (sesion.Caja.IdSucursal != idSucursal || sesion.Caja.Sucursal.IdEmpresa != idEmpresa)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("La sesión no pertenece a tu sucursal o empresa.");
+                }
 
                 if (tipo == TiposMovimientoCaja.RETIRO)
                 {
@@ -437,7 +483,9 @@ public class CajaOperacionController : Controller
         var idUsuario = ObtenerIdUsuario();
         var idCaja = ObtenerClaimInt(ClaimIdCaja);
         var idSesion = ObtenerClaimLong(ClaimIdSesionCaja);
-        if (idUsuario is null || idCaja is null || idSesion is null)
+        var idSucursal = ObtenerClaimInt("IdSucursal");
+        var idEmpresa = ObtenerClaimInt("IdEmpresa");
+        if (idUsuario is null || idCaja is null || idSesion is null || idSucursal is null || idEmpresa is null)
         {
             return JsonError("No tienes una sesión de caja activa.");
         }
@@ -447,7 +495,9 @@ public class CajaOperacionController : Controller
             .AnyAsync(sc =>
                 sc.IdSesionCaja == idSesion &&
                 sc.IdCaja == idCaja &&
-                sc.IdUsuarioApertura == idUsuario);
+                sc.IdUsuarioApertura == idUsuario &&
+                sc.Caja.IdSucursal == idSucursal &&
+                sc.Caja.Sucursal.IdEmpresa == idEmpresa);
 
         if (!pertenece)
         {
@@ -465,10 +515,17 @@ public class CajaOperacionController : Controller
     {
         try
         {
+            if (modelo is null)
+            {
+                return RedirectConError("Los datos de cierre son inválidos.");
+            }
+
             var idUsuario = ObtenerIdUsuario();
             var idCaja = ObtenerClaimInt(ClaimIdCaja);
             var idSesion = ObtenerClaimLong(ClaimIdSesionCaja);
-            if (idUsuario is null || idCaja is null || idSesion is null)
+            var idSucursal = ObtenerClaimInt("IdSucursal");
+            var idEmpresa = ObtenerClaimInt("IdEmpresa");
+            if (idUsuario is null || idCaja is null || idSesion is null || idSucursal is null || idEmpresa is null)
             {
                 return RedirectConError("No tienes una sesión de caja activa.");
             }
@@ -483,12 +540,18 @@ public class CajaOperacionController : Controller
             {
                 var sesion = await _db.SesionesCaja
                     .FromSqlRaw("SELECT * FROM SesionesCaja WHERE IdSesionCaja = {0} AND IdCaja = {1} FOR UPDATE", idSesion, idCaja)
+                    .Include(sc => sc.Caja).ThenInclude(c => c.Sucursal)
                     .FirstOrDefaultAsync();
 
                 if (sesion is null) { await tx.RollbackAsync(); return RedirectConError("La sesión de caja no existe."); }
                 if (sesion.Estado == EstadosSesionCaja.CERRADA) { await tx.RollbackAsync(); return RedirectConError("La sesión de caja ya está cerrada."); }
                 if (sesion.Estado != EstadosSesionCaja.ABIERTA) { await tx.RollbackAsync(); return RedirectConError("La sesión de caja no está abierta."); }
                 if (sesion.IdUsuarioApertura != idUsuario) { await tx.RollbackAsync(); return RedirectConError("No tienes permiso sobre esta sesión."); }
+                if (sesion.Caja.IdSucursal != idSucursal || sesion.Caja.Sucursal.IdEmpresa != idEmpresa)
+                {
+                    await tx.RollbackAsync();
+                    return RedirectConError("La sesión no pertenece a tu sucursal o empresa.");
+                }
 
                 var (entradas, retiros, ventasEfectivo) = await CalcularTotalesAsync(idSesion.Value, idCaja.Value);
                 var efectivoEsperado = sesion.FondoInicial + entradas + ventasEfectivo - retiros;

@@ -19,12 +19,140 @@ El proceso del servidor queda desacoplado y controlado mediante PID.
 Un bloqueo tras capturar el PID es un ERROR DE INFRAESTRUCTURA RECUPERABLE:
 diagnosticar, limpiar y reintentar como máximo una vez; nunca quedarse esperando.
 
+## Manejo de PID activo
+
+Al iniciar una batería, **encontrar un PID activo en `server.pid` NO constituye por sí solo un error ni un bloqueo.**
+
+El runner debe distinguir, después de leer el PID persistido, aplicando estos casos en orden:
+
+### CASO 1 — PID NO EXISTE
+
+Clasificar: `STALE_PID`.
+
+- El PID persistido no corresponde a ningún proceso actual.
+- Eliminar **únicamente** el archivo `server.pid` obsoleto.
+- Verificar puerto objetivo.
+- Si puerto libre: continuar START normalmente.
+- **NO DETENERSE.**
+
+### CASO 2 — PID EXISTE + OWNERSHIP DEMOSTRADO
+
+- El PID corresponde inequívocamente a una ejecución anterior del runner.
+- La evidencia persistida (archivo de ownership, stdout/stderr) demuestra ownership.
+- **NO esperar.**
+- Ejecutar STOP controlado:
+  1. conservar stdout/stderr;
+  2. detener **ÚNICAMENTE** el PID propio;
+  3. espera acotada máximo 3 segundos;
+  4. si continúa, forzar **ÚNICAMENTE** ese PID;
+  5. verificar terminación;
+  6. verificar puerto libre.
+- Si cleanup correcto: continuar normalmente.
+- **NO DETENERSE.**
+- Si no puede detenerse: `SERVER_STOP_FAILED` → **DETENTE Y REPORTA.**
+
+### CASO 3 — PID EXISTE PERO PUERTO OBJETIVO LIBRE
+
+- No asumir que es nuestro servidor.
+- Puede tratarse de PID reutilizado por Windows.
+- Clasificar: `STALE_OR_REUSED_PID`.
+- Eliminar **únicamente** la referencia `server.pid` obsoleta.
+- **NO matar el proceso.**
+- Continuar START.
+- **NO DETENERSE.**
+
+### CASO 4 — PUERTO OCUPADO POR PROCESO AJENO
+
+- El puerto está ocupado y **NO** puede demostrarse ownership.
+- Clasificar: `PORT_IN_USE`.
+- **NO matar proceso.**
+- NO `taskkill`. NO `Stop-Process`.
+- **DETENTE Y REPORTA:** PID encontrado, puerto, proceso propietario si puede determinarse, evidencia disponible.
+- **DETENERSE.**
+
+### CASO 5 — PID PROPIO + SERVIDOR YA READY
+
+- Existe evidencia inequívoca de que:
+  - PID pertenece al runner actual;
+  - puerto correcto;
+  - servidor está READY;
+  - corresponde a la misma ejecución.
+- **NO** iniciar otro servidor.
+- REUTILIZAR el servidor existente y continuar la batería.
+- **NO DETENERSE.**
+
+---
+
+## MANEJO DE PID ACTIVO
+
+Al iniciar una batería, **encontrar un PID activo en `server.pid` NO constituye por sí solo un error ni un bloqueo.**
+
+El runner debe distinguir, después de leer el PID persistido, aplicando estos casos en orden:
+
+### CASO 1 — PID NO EXISTE
+
+Clasificar: `STALE_PID`.
+
+- El PID persistido no corresponde a ningún proceso actual.
+- Eliminar **únicamente** el archivo `server.pid` obsoleto.
+- Verificar puerto objetivo.
+- Si puerto libre: continuar START normalmente.
+- **NO DETENERSE.**
+
+### CASO 2 — PID EXISTE + OWNERSHIP DEMOSTRADO
+
+- El PID corresponde inequívocamente a una ejecución anterior del runner.
+- La evidencia persistida (archivo de ownership, stdout/stderr) demuestra ownership.
+- **NO esperar.**
+- Ejecutar STOP controlado:
+  1. conservar stdout/stderr;
+  2. detener **ÚNICAMENTE** el PID propio;
+  3. espera acotada máximo 3 segundos;
+  4. si continúa, forzar **ÚNICAMENTE** ese PID;
+  5. verificar terminación;
+  6. verificar puerto libre.
+- Si cleanup correcto: continuar normalmente.
+- **NO DETENERSE.**
+- Si no puede detenerse: `SERVER_STOP_FAILED` → **DETENTE Y REPORTA.**
+
+### CASO 3 — PID EXISTE PERO PUERTO OBJETIVO LIBRE
+
+- No asumir que es nuestro servidor.
+- Puede tratarse de PID reutilizado por Windows.
+- Clasificar: `STALE_OR_REUSED_PID`.
+- Eliminar **únicamente** la referencia `server.pid` obsoleta.
+- **NO matar el proceso.**
+- Continuar START.
+- **NO DETENERSE.**
+
+### CASO 4 — PUERTO OCUPADO POR PROCESO AJENO
+
+- El puerto está ocupado y **NO** puede demostrarse ownership.
+- Clasificar: `PORT_IN_USE`.
+- **NO matar proceso.**
+- NO `taskkill`. NO `Stop-Process`.
+- **DETENTE Y REPORTA:** PID encontrado, puerto, proceso propietario si puede determinarse, evidencia disponible.
+- **DETENERSE.**
+
+### CASO 5 — PID PROPIO + SERVIDOR YA READY
+
+- Existe evidencia inequívoca de que:
+  - PID pertenece al runner actual;
+  - puerto correcto;
+  - servidor está READY;
+  - corresponde a la misma ejecución.
+- **NO** iniciar otro servidor.
+- REUTILIZAR el servidor existente y continuar la batería.
+- **NO DETENERSE.**
+
 ---
 
 ## Flujo obligatorio
 
 ```
-START
+LEER server.pid (si existe)
+→ CLASIFICAR PID ACTIVO (CASO 1–5)
+→ START (si procede)
 → CAPTURAR PID
 → SONDEAR READY
 → TIMEOUT
@@ -40,15 +168,18 @@ START
 - Usar `dotnet run` únicamente de forma controlada y NO bloqueante.
 - Prohibido dejar `dotnet run` bloqueante en primer plano.
 - Prohibido abrir ventana física adicional (sin terminales nuevas).
-- Capturar obligatoriamente y persistir:
-  - PID propio (ej. `server.pid`);
-  - stdout (ej. `server.out`);
-  - stderr (ej. `server.err`).
+- Capturar obligatoriamente y persistir en un archivo de ownership (ver sección **ARCHIVO DE OWNERSHIP**):
+  - PID propio;
+  - puerto objetivo;
+  - timestamp de inicio;
+  - ruta/proyecto ejecutado;
+  - stdout;
+  - stderr.
 - Iniciar UNA sola instancia del servidor; no iniciar una segunda porque la primera siga viva.
 - El proceso puede iniciarse desacoplado (p. ej. `Start-Process` con redirección de streams) para que sobreviva al shell que lanza la prueba.
 - Antes de iniciar:
-  1. comprobar que no exista un PID de prueba anterior;
-  2. comprobar que el puerto objetivo esté libre (ver sección PUERTO OCUPADO).
+  1. aplicar **MANEJO DE PID ACTIVO** (CASO 1–5);
+  2. comprobar que el puerto objetivo esté libre después de resolver el PID.
 
 ---
 
@@ -120,14 +251,15 @@ Si el diagnóstico indica un fallo recuperable de infraestructura, aplicar REINT
 
 ## PUERTO OCUPADO
 
-Si antes de START el puerto ya está ocupado:
+Antes de START, aplicar **MANEJO DE PID ACTIVO** (CASO 1–5).
 
-- NO matar procesos desconocidos.
-- Identificar si el proceso que ocupa el puerto pertenece a una ejecución propia verificable
-  (PID registrado en `server.pid` de una prueba propia anterior).
-- Si NO puede demostrarse ownership:
-  - DETENERSE y reportar `PORT_IN_USE`;
-  - NO ejecutar `taskkill` ni `Stop-Process` contra procesos ajenos.
+- Si el puerto está ocupado: comprobar si el proceso corresponde a una ejecución propia verificable
+  (PID registrado en el archivo de ownership con stdout/stderr concluyentes).
+- Si puede demostrarse ownership (CASO 2 o CASO 5): limpiar o reutilizar según corresponda.
+- Si NO puede demostrarse ownership (CASO 4 → `PORT_IN_USE`):
+  - **NO matar procesos desconocidos.**
+  - **NO ejecutar** `taskkill` ni `Stop-Process` contra procesos ajenos.
+  - DETENERSE y reportar `PORT_IN_USE`.
 
 ---
 
@@ -147,6 +279,28 @@ Nunca usar `taskkill /IM dotnet.exe`; nunca matar procesos `dotnet` ajenos.
 
 ---
 
+## ARCHIVO DE OWNERSHIP
+
+Para poder distinguir un PID propio de un PID reutilizado por Windows,
+el runner debe persistir un archivo de estado (ej. `server.owner.json`) con al menos:
+
+- `pid` — PID del proceso iniciado;
+- `puerto` — puerto objetivo configurado;
+- `timestampInicio` — timestamp Unix de inicio;
+- `proyecto` — ruta/proyecto ejecutado;
+- `stdout` — ruta al archivo de stdout;
+- `stderr` — ruta al archivo de stderr.
+
+Al validar un PID activo:
+1. Leer el archivo de ownership.
+2. Comprobar si el PID existe actualmente.
+3. Comparar el timestamp de inicio con el del proceso (si el proceso arrasó después, el PID fue reutilizado).
+4. No asumir ownership únicamente porque el número coincide.
+
+No inventar infraestructura excesiva. Un archivo JSON simple es suficiente.
+
+---
+
 ## PowerShell
 
 - Documentar y usar comandos compatibles con PowerShell 5.1.
@@ -162,6 +316,25 @@ Nunca usar `taskkill /IM dotnet.exe`; nunca matar procesos `dotnet` ajenos.
 ## ERRORES DEL RUNNER
 
 Cada error indica: condición, evidencia a capturar, cleanup permitido, si admite reintento y cuándo DETENERSE.
+
+Ver también **MANEJO DE PID ACTIVO**: encontrar un PID activo **NO ES POR SÍ MISMO UN ERROR**.
+Solo se detienen los casos listados en **POLÍTICA DE ERROR**.
+
+### STALE_PID
+
+- Condición: el PID persistido en `server.pid` (o archivo de ownership) no existe actualmente.
+- Evidencia: PID persistido; `Get-Process -Id $pid -ErrorAction SilentlyContinue` devuelve nada.
+- Cleanup permitido: eliminar únicamente el archivo de ownership/`server.pid` obsoleto; verificar puerto.
+- Reintento: N/A (esto no es un error de arranque).
+- Cuándo DETENERSE: nunca, si el puerto queda libre. Continuar START.
+
+### STALE_OR_REUSED_PID
+
+- Condición: el PID existe, pero el puerto objetivo está libre (PID reutilizado por Windows).
+- Evidencia: PID vivo, puerto libre, imposible demostrar ownership del runner.
+- Cleanup permitido: eliminar únicamente el archivo de ownership obsoleto. **NO** matar el proceso.
+- Reintento: N/A.
+- Cuándo DETENERSE: nunca, si el puerto queda libre. Continuar START.
 
 ### SERVER_START_TIMEOUT
 
@@ -225,3 +398,65 @@ Al finalizar cualquier batería:
 Reporte obligatorio:
 `Servidor de prueba detenido = sí/no`
 `Puerto libre = sí/no`
+
+---
+
+## POLÍTICA DE ERROR
+
+Encontrar un PID activo: **NO ES POR SÍ MISMO UN ERROR**.
+
+Solo DETENERSE cuando:
+
+- `PORT_IN_USE` sin ownership demostrable;
+- `SERVER_STOP_FAILED` (el PID propio no termina tras el STOP forzado);
+- `SERVER_START_FAILED` tras el único reintento permitido;
+- contradicción real que impida demostrar seguridad.
+
+Recuperable automáticamente:
+
+- `STALE_PID`: recuperarse eliminando el archivo obsoleto y continuando.
+- `STALE_OR_REUSED_PID`: recuperarse si el puerto queda libre (sin matar procesos).
+- PID propio anterior: cleanup acotado (STOP máximo 3 s, luego forzar).
+- PID propio actual READY: reutilizar.
+
+Nunca matar procesos sin ownership.
+
+---
+
+## PowerShell 5.1
+
+Todo ejemplo debe ser compatible con Windows PowerShell 5.1.
+
+- NO usar `&&`.
+- NO waits indefinidos.
+- NO ventanas interactivas.
+- NO comandos que maten todos los `dotnet.exe`.
+- Usar comandos separados o `;` para encadenar.
+- Usar `Start-Process` de forma controlada con redirección de streams (no `-Wait`).
+
+---
+
+## TESTING.md
+
+Revisar `AgentInstructions/TESTING.md`. Este archivo (SERVER_RUNNER.md) tiene prioridad
+sobre `TESTING.md` respecto al ciclo de vida del servidor.
+
+Modificar `TESTING.md` únicamente si hace falta una referencia breve a esta política
+de manejo de PID activo. No duplicar este archivo completo.
+
+---
+
+## VERIFICACIÓN
+
+Después de editar:
+
+1. **PID activo NO implica DETENTE.**
+2. **PID obsoleto se recupera** (`STALE_PID`).
+3. **PID reutilizado no provoca matar proceso ajeno** (`STALE_OR_REUSED_PID`).
+4. **PID propio anterior se limpia con timeout** (STOP máximo 3 s).
+5. **PID propio READY puede reutilizarse** (`CASO 5`).
+6. **Puerto ajeno produce `PORT_IN_USE` + DETENTE**.
+7. **Ninguna espera puede ser infinita** (sondaje READY máximo 7 s).
+8. **STOP máximo 3 segundos** antes de escalamiento controlado.
+9. **Máximo 1 reintento** de START.
+10. **Nunca matar procesos sin ownership**.

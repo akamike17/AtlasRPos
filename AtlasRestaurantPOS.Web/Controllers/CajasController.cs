@@ -1,3 +1,4 @@
+﻿using System.Security.Claims;
 using AtlasRestaurantPOS.Web.Constants;
 using AtlasRestaurantPOS.Web.Data;
 using AtlasRestaurantPOS.Web.Models;
@@ -31,7 +32,13 @@ public class CajasController : Controller
     [HttpGet]
     public async Task<IActionResult> Buscar(string? termino = null)
     {
-        var query = _db.Cajas.AsNoTracking();
+        var idEmpresa = ObtenerClaimInt("IdEmpresa");
+        if (idEmpresa is null)
+        {
+            return JsonError("No se pudo identificar tu empresa.");
+        }
+
+        var query = _db.Cajas.AsNoTracking().Where(c => c.Sucursal.IdEmpresa == idEmpresa.Value);
 
         if (!string.IsNullOrWhiteSpace(termino))
         {
@@ -69,9 +76,20 @@ public class CajasController : Controller
     {
         try
         {
+            if (modelo is null)
+            {
+                return JsonError("Datos inválidos.");
+            }
+
             if (!ModelState.IsValid)
             {
                 return JsonError(ErrorModelState());
+            }
+
+            var idEmpresa = ObtenerClaimInt("IdEmpresa");
+            if (idEmpresa is null)
+            {
+                return JsonError("No se pudo identificar tu empresa.");
             }
 
             var error = await ValidarFormularioAsync(modelo);
@@ -118,9 +136,20 @@ public class CajasController : Controller
     {
         try
         {
+            if (modelo is null)
+            {
+                return JsonError("Datos inválidos.");
+            }
+
             if (!ModelState.IsValid)
             {
                 return JsonError(ErrorModelState());
+            }
+
+            var idEmpresa = ObtenerClaimInt("IdEmpresa");
+            if (idEmpresa is null)
+            {
+                return JsonError("No se pudo identificar tu empresa.");
             }
 
             var error = await ValidarFormularioAsync(modelo);
@@ -129,10 +158,18 @@ public class CajasController : Controller
                 return JsonError(error);
             }
 
-            var caja = await _db.Cajas.FirstOrDefaultAsync(c => c.IdCaja == modelo.IdCaja);
+            var caja = await _db.Cajas
+                .Include(c => c.Sucursal)
+                .FirstOrDefaultAsync(c => c.IdCaja == modelo.IdCaja);
+
             if (caja is null)
             {
                 return JsonError("La caja no existe.");
+            }
+
+            if (caja.Sucursal?.IdEmpresa != idEmpresa.Value)
+            {
+                return JsonError("No tienes permiso sobre la empresa de esta caja.");
             }
 
             var codigo = modelo.Codigo.Trim();
@@ -141,6 +178,20 @@ public class CajasController : Controller
             if (await _db.Cajas.AnyAsync(c => c.IdSucursal == modelo.IdSucursal && c.Codigo == codigo && c.IdCaja != caja.IdCaja))
             {
                 return JsonError("Ya existe una caja con ese código en la sucursal seleccionada.");
+            }
+
+            var tieneSesionAbierta = await _db.SesionesCaja
+                .AnyAsync(sc => sc.IdCaja == caja.IdCaja && sc.Estado == EstadosSesionCaja.ABIERTA);
+
+            if (tieneSesionAbierta)
+            {
+                var cambioCritico = caja.IdSucursal != modelo.IdSucursal ||
+                                    !string.Equals(caja.Codigo, codigo, StringComparison.OrdinalIgnoreCase);
+
+                if (cambioCritico)
+                {
+                    return JsonError("No se pueden modificar datos críticos (sucursal o código) de una caja con sesión abierta.");
+                }
             }
 
             var anterior = Snapshot(caja);
@@ -174,54 +225,59 @@ public class CajasController : Controller
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Inactivar(int id)
     {
-        try
-        {
-            var caja = await _db.Cajas.FirstOrDefaultAsync(c => c.IdCaja == id);
-            if (caja is null)
-            {
-                return JsonError("La caja no existe.");
-            }
-
-            if (!caja.Activo)
-            {
-                return JsonError("La caja ya está inactiva.");
-            }
-
-            var tieneSesionAbierta = await _db.SesionesCaja
-                .AnyAsync(sc => sc.IdCaja == caja.IdCaja && sc.Estado == EstadosSesionCaja.ABIERTA);
-
-            if (tieneSesionAbierta)
-            {
-                return JsonError("No se puede inactivar la caja porque tiene una sesión abierta.");
-            }
-
-            caja.Activo = false;
-            await _db.SaveChangesAsync();
-
-            await _auditoria.RegistrarAsync("Caja", caja.IdCaja.ToString(), "INACTIVAR_CAJA", null, new { caja.Activo });
-
-            return JsonOk("Caja inactivada correctamente.");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error al inactivar caja {Id}.", id);
-            return JsonError("Ocurrió un error al cambiar el estatus.");
-        }
+        return await CambiarEstatus(id, false, "INACTIVAR_CAJA", "Caja inactivada correctamente.");
     }
 
     private async Task<IActionResult> CambiarEstatus(int id, bool activo, string accion, string mensajeOk)
     {
         try
         {
-            var caja = await _db.Cajas.FirstOrDefaultAsync(c => c.IdCaja == id);
+            var idEmpresa = ObtenerClaimInt("IdEmpresa");
+            if (idEmpresa is null)
+            {
+                return JsonError("No se pudo identificar tu empresa.");
+            }
+
+            var caja = await _db.Cajas
+                .Include(c => c.Sucursal).ThenInclude(s => s.Empresa)
+                .FirstOrDefaultAsync(c => c.IdCaja == id);
+
             if (caja is null)
             {
                 return JsonError("La caja no existe.");
             }
 
+            if (caja.Sucursal?.IdEmpresa != idEmpresa.Value)
+            {
+                return JsonError("No tienes permiso sobre la empresa de esta caja.");
+            }
+
             if (caja.Activo == activo)
             {
                 return JsonError(activo ? "La caja ya está activa." : "La caja ya está inactiva.");
+            }
+
+            if (!activo)
+            {
+                var tieneSesionAbierta = await _db.SesionesCaja
+                    .AnyAsync(sc => sc.IdCaja == caja.IdCaja && sc.Estado == EstadosSesionCaja.ABIERTA);
+
+                if (tieneSesionAbierta)
+                {
+                    return JsonError("No se puede inactivar la caja porque tiene una sesión abierta.");
+                }
+            }
+            else
+            {
+                if (caja.Sucursal is null || !caja.Sucursal.Activo)
+                {
+                    return JsonError("No se puede activar la caja porque su sucursal está inactiva.");
+                }
+
+                if (caja.Sucursal.Empresa is null || !caja.Sucursal.Empresa.Activo)
+                {
+                    return JsonError("No se puede activar la caja porque su empresa está inactiva.");
+                }
             }
 
             caja.Activo = activo;
@@ -263,6 +319,12 @@ public class CajasController : Controller
             return "La sucursal es obligatoria.";
         }
 
+        var idEmpresa = ObtenerClaimInt("IdEmpresa");
+        if (idEmpresa is null)
+        {
+            return "No se pudo identificar tu empresa.";
+        }
+
         var sucursal = await _db.Sucursales
             .Include(s => s.Empresa)
             .FirstOrDefaultAsync(s => s.IdSucursal == modelo.IdSucursal);
@@ -277,12 +339,23 @@ public class CajasController : Controller
             return "La sucursal seleccionada está inactiva.";
         }
 
-        if (!sucursal.Empresa.Activo)
+        if (sucursal.IdEmpresa != idEmpresa.Value)
+        {
+            return "No tienes permiso sobre la empresa de la sucursal seleccionada.";
+        }
+
+        if (sucursal.Empresa is null || !sucursal.Empresa.Activo)
         {
             return "La empresa de la sucursal seleccionada está inactiva.";
         }
 
         return null;
+    }
+
+    private int? ObtenerClaimInt(string tipo)
+    {
+        var valor = User.FindFirstValue(tipo);
+        return int.TryParse(valor, out var id) ? id : null;
     }
 
     private static object Snapshot(Caja c) => new

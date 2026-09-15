@@ -29,6 +29,7 @@ Antes de iniciar:
 3. detener únicamente procesos creados por pruebas propias anteriores;
 4. nunca matar procesos `dotnet` ajenos;
 5. nunca usar: `taskkill /IM dotnet.exe`
+Ver `AgentInstructions/SERVER_RUNNER.md` → sección **MANEJO DE PID ACTIVO** para la clasificación detallada de PID activo (STALE_PID, STALE_OR_REUSED_PID, ownership, CASO 5).
 
 ---
 
