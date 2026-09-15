@@ -44,7 +44,7 @@ public class RecetasController : Controller
                 .Include(r => r.Insumo)
                     .ThenInclude(i => i.UnidadMedida)
                 .Include(r => r.Producto)
-                .Where(r => r.Insumo.IdEmpresa == idEmpresa.Value);
+                .Where(r => r.Insumo.IdEmpresa == idEmpresa.Value && r.Producto.IdEmpresa == idEmpresa.Value);
 
             if (idProducto is not null && idProducto > 0)
             {
@@ -102,7 +102,7 @@ public class RecetasController : Controller
             .Include(r => r.Insumo)
                 .ThenInclude(i => i.UnidadMedida)
             .Include(r => r.Producto)
-            .FirstOrDefaultAsync(r => r.IdRecetaProducto == id && r.Insumo.IdEmpresa == idEmpresa.Value);
+            .FirstOrDefaultAsync(r => r.IdRecetaProducto == id && r.Insumo.IdEmpresa == idEmpresa.Value && r.Producto.IdEmpresa == idEmpresa.Value);
 
         if (receta is null)
         {
@@ -139,7 +139,7 @@ public class RecetasController : Controller
                 return JsonError("No se pudo identificar tu empresa.");
             }
 
-            var producto = await _db.Productos.FirstOrDefaultAsync(p => p.IdProducto == modelo.IdProducto && p.Activo);
+            var producto = await _db.Productos.FirstOrDefaultAsync(p => p.IdProducto == modelo.IdProducto && p.IdEmpresa == idEmpresa.Value && p.Activo);
             if (producto is null) return JsonError("El producto no existe o está inactivo.");
 
             var insumo = await _db.Insumos.FirstOrDefaultAsync(i => i.IdInsumo == modelo.IdInsumo && i.Activo && i.IdEmpresa == idEmpresa.Value);
@@ -147,7 +147,7 @@ public class RecetasController : Controller
 
             if (modelo.Cantidad <= 0) return JsonError("La cantidad debe ser mayor a cero.");
 
-            var existe = await _db.RecetasProducto.AnyAsync(r => r.IdProducto == modelo.IdProducto && r.IdInsumo == modelo.IdInsumo);
+            var existe = await _db.RecetasProducto.AnyAsync(r => r.IdProducto == modelo.IdProducto && r.IdInsumo == modelo.IdInsumo && r.Producto.IdEmpresa == idEmpresa.Value && r.Insumo.IdEmpresa == idEmpresa.Value);
             if (existe) return JsonError("Ya existe este insumo configurado en la receta del producto.");
 
             var receta = new RecetaProducto
@@ -197,7 +197,7 @@ public class RecetasController : Controller
             var receta = await _db.RecetasProducto
                 .Include(r => r.Insumo)
                 .Include(r => r.Producto)
-                .FirstOrDefaultAsync(r => r.IdRecetaProducto == modelo.IdRecetaProducto && r.Insumo.IdEmpresa == idEmpresa.Value);
+                .FirstOrDefaultAsync(r => r.IdRecetaProducto == modelo.IdRecetaProducto && r.Insumo.IdEmpresa == idEmpresa.Value && r.Producto.IdEmpresa == idEmpresa.Value);
 
             if (receta is null) return JsonError("La receta no existe.");
 
@@ -238,7 +238,7 @@ public class RecetasController : Controller
             var receta = await _db.RecetasProducto
                 .Include(r => r.Insumo)
                 .Include(r => r.Producto)
-                .FirstOrDefaultAsync(r => r.IdRecetaProducto == id && r.Insumo.IdEmpresa == idEmpresa.Value);
+                .FirstOrDefaultAsync(r => r.IdRecetaProducto == id && r.Insumo.IdEmpresa == idEmpresa.Value && r.Producto.IdEmpresa == idEmpresa.Value);
 
             if (receta is null) return JsonError("La receta no existe.");
 
@@ -269,7 +269,7 @@ public class RecetasController : Controller
 
         var productos = await _db.Productos
             .AsNoTracking()
-            .Where(p => p.Activo)
+            .Where(p => p.IdEmpresa == idEmpresa.Value && p.Activo)
             .OrderBy(p => p.Nombre)
             .Select(p => new { p.IdProducto, p.Nombre, Categoria = p.CategoriaProducto.Nombre, p.Codigo })
             .ToListAsync();

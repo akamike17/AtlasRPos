@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using AtlasRestaurantPOS.Web.Data;
 using AtlasRestaurantPOS.Web.Models;
 using AtlasRestaurantPOS.Web.Models.ViewModels;
@@ -30,7 +31,9 @@ public class CategoriasController : Controller
     [HttpGet]
     public async Task<IActionResult> Buscar(string? termino = null)
     {
-        var query = _db.CategoriasProducto.AsNoTracking();
+        var idEmpresa = ObtenerClaimInt("IdEmpresa");
+        if (idEmpresa is null) return JsonError("No se pudo identificar tu empresa.");
+        var query = _db.CategoriasProducto.AsNoTracking().Where(c => c.IdEmpresa == idEmpresa.Value);
 
         if (!string.IsNullOrWhiteSpace(termino))
         {
@@ -48,7 +51,7 @@ public class CategoriasController : Controller
                 c.Nombre,
                 c.Descripcion,
                 c.Activo,
-                CantidadProductos = c.Productos.Count()
+                CantidadProductos = c.Productos.Count(p => p.IdEmpresa == idEmpresa.Value)
             })
             .ToListAsync();
 
@@ -59,6 +62,9 @@ public class CategoriasController : Controller
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Crear([FromBody] CategoriaForm modelo)
     {
+        var idEmpresa = ObtenerClaimInt("IdEmpresa");
+        if (idEmpresa is null) return JsonError("No se pudo identificar tu empresa.");
+
         try
         {
             if (modelo is null)
@@ -74,13 +80,14 @@ public class CategoriasController : Controller
 
             var nombre = modelo.Nombre.Trim();
 
-            if (await _db.CategoriasProducto.AnyAsync(c => c.Nombre == nombre))
+            if (await _db.CategoriasProducto.AnyAsync(c => c.IdEmpresa == idEmpresa.Value && c.Nombre == nombre))
             {
                 return JsonError("Ya existe una categoría con ese nombre.");
             }
 
             var categoria = new CategoriaProducto
             {
+                IdEmpresa = idEmpresa.Value,
                 Nombre = nombre,
                 Descripcion = Normalizar(modelo.Descripcion),
                 Activo = true
@@ -108,6 +115,9 @@ public class CategoriasController : Controller
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Editar([FromBody] CategoriaForm modelo)
     {
+        var idEmpresa = ObtenerClaimInt("IdEmpresa");
+        if (idEmpresa is null) return JsonError("No se pudo identificar tu empresa.");
+
         try
         {
             if (modelo is null)
@@ -121,7 +131,7 @@ public class CategoriasController : Controller
                 return JsonError(error);
             }
 
-            var categoria = await _db.CategoriasProducto.FirstOrDefaultAsync(c => c.IdCategoriaProducto == modelo.IdCategoriaProducto);
+            var categoria = await _db.CategoriasProducto.FirstOrDefaultAsync(c => c.IdCategoriaProducto == modelo.IdCategoriaProducto && c.IdEmpresa == idEmpresa.Value);
             if (categoria is null)
             {
                 return JsonError("La categoría no existe.");
@@ -129,7 +139,7 @@ public class CategoriasController : Controller
 
             var nombre = modelo.Nombre.Trim();
 
-            if (await _db.CategoriasProducto.AnyAsync(c => c.Nombre == nombre && c.IdCategoriaProducto != categoria.IdCategoriaProducto))
+            if (await _db.CategoriasProducto.AnyAsync(c => c.IdEmpresa == idEmpresa.Value && c.Nombre == nombre && c.IdCategoriaProducto != categoria.IdCategoriaProducto))
             {
                 return JsonError("Ya existe una categoría con ese nombre.");
             }
@@ -169,7 +179,7 @@ public class CategoriasController : Controller
     {
         try
         {
-            var categoria = await _db.CategoriasProducto.FirstOrDefaultAsync(c => c.IdCategoriaProducto == id);
+            var categoria = await _db.CategoriasProducto.FirstOrDefaultAsync(c => c.IdCategoriaProducto == id && c.IdEmpresa == (ObtenerClaimInt("IdEmpresa") ?? 0));
             if (categoria is null)
             {
                 return JsonError("La categoría no existe.");
@@ -181,7 +191,7 @@ public class CategoriasController : Controller
             }
 
             var tieneProductosActivos = await _db.Productos
-                .AnyAsync(p => p.IdCategoriaProducto == id && p.Activo);
+                .AnyAsync(p => p.IdCategoriaProducto == id && p.IdEmpresa == (ObtenerClaimInt("IdEmpresa") ?? 0) && p.Activo);
 
             if (tieneProductosActivos)
             {
@@ -208,7 +218,7 @@ public class CategoriasController : Controller
     {
         try
         {
-            var categoria = await _db.CategoriasProducto.FirstOrDefaultAsync(c => c.IdCategoriaProducto == id);
+            var categoria = await _db.CategoriasProducto.FirstOrDefaultAsync(c => c.IdCategoriaProducto == id && c.IdEmpresa == (ObtenerClaimInt("IdEmpresa") ?? 0));
             if (categoria is null)
             {
                 return JsonError("La categoría no existe.");
@@ -264,6 +274,7 @@ public class CategoriasController : Controller
 
     private static object Snapshot(CategoriaProducto c) => new
     {
+        c.IdEmpresa,
         c.Nombre,
         c.Descripcion,
         c.Activo
@@ -272,6 +283,12 @@ public class CategoriasController : Controller
     private static string? Normalizar(string? valor)
     {
         return string.IsNullOrWhiteSpace(valor) ? null : valor.Trim();
+    }
+
+    private int? ObtenerClaimInt(string tipo)
+    {
+        var valor = User.FindFirstValue(tipo);
+        return int.TryParse(valor, out var id) ? id : null;
     }
 
     private JsonResult JsonOk(string mensaje)

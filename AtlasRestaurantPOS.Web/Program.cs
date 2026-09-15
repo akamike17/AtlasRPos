@@ -1,10 +1,12 @@
 using Microsoft.EntityFrameworkCore;
+using AtlasRestaurantPOS.Web.Constants;
 using AtlasRestaurantPOS.Web.Data;
 using AtlasRestaurantPOS.Web.Models;
 using AtlasRestaurantPOS.Web.Services.Auditoria;
 using AtlasRestaurantPOS.Web.Services.Bootstrap;
 using AtlasRestaurantPOS.Web.Services.CodigoInterno;
 using AtlasRestaurantPOS.Web.Services.Comanda;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
@@ -40,7 +42,47 @@ builder.Services.AddAuthentication("AtlasRestaurantCookie")
         options.Events = new CookieAuthenticationEvents
         {
             OnRedirectToLogin = ctx => RespuestaRedirect(ctx, 401),
-            OnRedirectToAccessDenied = ctx => RespuestaRedirect(ctx, 403)
+            OnRedirectToAccessDenied = ctx => RespuestaRedirect(ctx, 403),
+            OnValidatePrincipal = async ctx =>
+            {
+                var idUsuarioClaim = ctx.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (!int.TryParse(idUsuarioClaim, out var idUsuario))
+                {
+                    ctx.RejectPrincipal();
+                    return;
+                }
+
+                var db = ctx.HttpContext.RequestServices.GetRequiredService<AtlasRestaurantDbContext>();
+                var usuario = await db.Usuarios
+                    .AsNoTracking()
+                    .Where(u => u.IdUsuario == idUsuario)
+                    .Select(u => new { u.IdEmpresa, u.IdRol, u.Activo, EmpresaActiva = u.Empresa.Activo, RolActivo = u.Rol.Activo, RolNombre = u.Rol.Nombre })
+                    .FirstOrDefaultAsync();
+
+                var claimsValidos = usuario is not null && usuario.Activo && usuario.EmpresaActiva && usuario.RolActivo
+                    && ctx.Principal?.FindFirstValue("IdEmpresa") == usuario.IdEmpresa.ToString()
+                    && ctx.Principal?.FindFirstValue("IdRol") == usuario.IdRol.ToString()
+                    && ctx.Principal?.IsInRole(usuario.RolNombre) == true;
+                if (!claimsValidos)
+                {
+                    ctx.RejectPrincipal();
+                    return;
+                }
+
+                var idCajaClaim = ctx.Principal?.FindFirstValue("IdCaja");
+                var idSesionClaim = ctx.Principal?.FindFirstValue("IdSesionCaja");
+                if (int.TryParse(idCajaClaim, out var idCaja) && long.TryParse(idSesionClaim, out var idSesion))
+                {
+                    var idSucursalClaim = ctx.Principal?.FindFirstValue("IdSucursal");
+                    var sesionValida = int.TryParse(idSucursalClaim, out var idSucursal) && await db.SesionesCaja
+                        .AsNoTracking()
+                        .AnyAsync(s => s.IdSesionCaja == idSesion && s.IdCaja == idCaja && s.Estado == EstadosSesionCaja.ABIERTA && s.IdUsuarioApertura == idUsuario && s.Caja.IdSucursal == idSucursal && s.Caja.Sucursal.IdEmpresa == usuario!.IdEmpresa && s.Caja.Activo && s.Caja.Sucursal.Activo && s.Caja.Sucursal.Empresa.Activo);
+                    if (!sesionValida)
+                    {
+                        ctx.RejectPrincipal();
+                    }
+                }
+            }
         };
     });
 

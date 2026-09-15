@@ -31,7 +31,9 @@ public class ProductosController : Controller
     [HttpGet]
     public async Task<IActionResult> Buscar(string? termino = null)
     {
-        var query = _db.Productos.AsNoTracking();
+        var idEmpresa = ObtenerClaimInt("IdEmpresa");
+        if (idEmpresa is null) return JsonError("No se pudo identificar tu empresa.");
+        var query = _db.Productos.AsNoTracking().Where(p => p.IdEmpresa == idEmpresa.Value);
 
         if (!string.IsNullOrWhiteSpace(termino))
         {
@@ -70,6 +72,9 @@ public class ProductosController : Controller
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Crear([FromBody] ProductoForm modelo)
     {
+        var idEmpresa = ObtenerClaimInt("IdEmpresa");
+        if (idEmpresa is null) return JsonError("No se pudo identificar tu empresa.");
+
         try
         {
             if (modelo is null)
@@ -77,7 +82,7 @@ public class ProductosController : Controller
                 return JsonError("Datos inválidos.");
             }
 
-            var error = await ValidarFormularioAsync(modelo);
+            var error = await ValidarFormularioAsync(modelo, idEmpresa.Value);
             if (error != null)
             {
                 return JsonError(error);
@@ -87,23 +92,24 @@ public class ProductosController : Controller
             var codigo = string.IsNullOrWhiteSpace(modelo.Codigo) ? null : modelo.Codigo.Trim();
             var codigoBarras = string.IsNullOrWhiteSpace(modelo.CodigoBarras) ? null : modelo.CodigoBarras.Trim();
 
-            if (await _db.Productos.AnyAsync(p => p.IdCategoriaProducto == modelo.IdCategoriaProducto && p.Nombre == nombre))
+            if (await _db.Productos.AnyAsync(p => p.IdEmpresa == idEmpresa.Value && p.IdCategoriaProducto == modelo.IdCategoriaProducto && p.Nombre == nombre))
             {
                 return JsonError("Ya existe un producto con ese nombre en la categoría seleccionada.");
             }
 
-            if (codigo != null && await _db.Productos.AnyAsync(p => p.Codigo == codigo))
+            if (codigo != null && await _db.Productos.AnyAsync(p => p.IdEmpresa == idEmpresa.Value && p.Codigo == codigo))
             {
                 return JsonError("Ya existe un producto con ese código interno.");
             }
 
-            if (codigoBarras != null && await _db.Productos.AnyAsync(p => p.CodigoBarras == codigoBarras))
+            if (codigoBarras != null && await _db.Productos.AnyAsync(p => p.IdEmpresa == idEmpresa.Value && p.CodigoBarras == codigoBarras))
             {
                 return JsonError("Ya existe un producto con ese código de barras.");
             }
 
             var producto = new Producto
             {
+                IdEmpresa = idEmpresa.Value,
                 IdCategoriaProducto = modelo.IdCategoriaProducto,
                 Codigo = codigo,
                 CodigoBarras = codigoBarras,
@@ -136,6 +142,9 @@ public class ProductosController : Controller
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> Editar([FromBody] ProductoForm modelo)
     {
+        var idEmpresa = ObtenerClaimInt("IdEmpresa");
+        if (idEmpresa is null) return JsonError("No se pudo identificar tu empresa.");
+
         try
         {
             if (modelo is null)
@@ -143,13 +152,13 @@ public class ProductosController : Controller
                 return JsonError("Datos inválidos.");
             }
 
-            var error = await ValidarFormularioAsync(modelo);
+            var error = await ValidarFormularioAsync(modelo, idEmpresa.Value);
             if (error != null)
             {
                 return JsonError(error);
             }
 
-            var producto = await _db.Productos.FirstOrDefaultAsync(p => p.IdProducto == modelo.IdProducto);
+            var producto = await _db.Productos.FirstOrDefaultAsync(p => p.IdProducto == modelo.IdProducto && p.IdEmpresa == idEmpresa.Value);
             if (producto is null)
             {
                 return JsonError("El producto no existe.");
@@ -160,6 +169,7 @@ public class ProductosController : Controller
             var codigoBarras = string.IsNullOrWhiteSpace(modelo.CodigoBarras) ? null : modelo.CodigoBarras.Trim();
 
             if (await _db.Productos.AnyAsync(p =>
+                p.IdEmpresa == idEmpresa.Value &&
                 p.IdCategoriaProducto == modelo.IdCategoriaProducto &&
                 p.Nombre == nombre &&
                 p.IdProducto != producto.IdProducto))
@@ -167,12 +177,12 @@ public class ProductosController : Controller
                 return JsonError("Ya existe un producto con ese nombre en la categoría seleccionada.");
             }
 
-            if (codigo != null && await _db.Productos.AnyAsync(p => p.Codigo == codigo && p.IdProducto != producto.IdProducto))
+            if (codigo != null && await _db.Productos.AnyAsync(p => p.IdEmpresa == idEmpresa.Value && p.Codigo == codigo && p.IdProducto != producto.IdProducto))
             {
                 return JsonError("Ya existe un producto con ese código interno.");
             }
 
-            if (codigoBarras != null && await _db.Productos.AnyAsync(p => p.CodigoBarras == codigoBarras && p.IdProducto != producto.IdProducto))
+            if (codigoBarras != null && await _db.Productos.AnyAsync(p => p.IdEmpresa == idEmpresa.Value && p.CodigoBarras == codigoBarras && p.IdProducto != producto.IdProducto))
             {
                 return JsonError("Ya existe un producto con ese código de barras.");
             }
@@ -221,7 +231,7 @@ public class ProductosController : Controller
     {
         try
         {
-            var producto = await _db.Productos.FirstOrDefaultAsync(p => p.IdProducto == id);
+            var producto = await _db.Productos.FirstOrDefaultAsync(p => p.IdProducto == id && p.IdEmpresa == (ObtenerClaimInt("IdEmpresa") ?? 0));
             if (producto is null)
             {
                 return JsonError("El producto no existe.");
@@ -257,7 +267,7 @@ public class ProductosController : Controller
             return JsonError("No se pudo identificar tu empresa.");
         }
 
-        var producto = await _db.Productos.AsNoTracking().FirstOrDefaultAsync(p => p.IdProducto == idProducto);
+        var producto = await _db.Productos.AsNoTracking().FirstOrDefaultAsync(p => p.IdProducto == idProducto && p.IdEmpresa == idEmpresa.Value);
         if (producto is null)
         {
             return JsonError("El producto no existe.");
@@ -309,7 +319,7 @@ public class ProductosController : Controller
                 return JsonError("No se pudo identificar tu empresa.");
             }
 
-            var producto = await _db.Productos.FirstOrDefaultAsync(p => p.IdProducto == modelo.IdProducto);
+            var producto = await _db.Productos.FirstOrDefaultAsync(p => p.IdProducto == modelo.IdProducto && p.IdEmpresa == idEmpresa.Value);
             if (producto is null)
             {
                 return JsonError("El producto no existe.");
@@ -380,6 +390,7 @@ public class ProductosController : Controller
 
             var rel = await _db.ProductosImpuestos
                 .Include(pi => pi.Impuesto)
+                .Include(pi => pi.Producto)
                 .FirstOrDefaultAsync(pi => pi.IdProducto == modelo.IdProducto && pi.IdImpuesto == modelo.IdImpuesto);
 
             if (rel is null)
@@ -387,7 +398,7 @@ public class ProductosController : Controller
                 return JsonError("La asignación de impuesto no existe.");
             }
 
-            if (rel.Impuesto.IdEmpresa != idEmpresa)
+            if (rel.Impuesto.IdEmpresa != idEmpresa || rel.Producto.IdEmpresa != idEmpresa)
             {
                 return JsonError("El impuesto no pertenece a tu empresa.");
             }
@@ -411,7 +422,7 @@ public class ProductosController : Controller
         }
     }
 
-    private async Task<string?> ValidarFormularioAsync(ProductoForm modelo)
+    private async Task<string?> ValidarFormularioAsync(ProductoForm modelo, int idEmpresa)
     {
         var nombre = (modelo.Nombre ?? string.Empty).Trim();
 
@@ -455,7 +466,7 @@ public class ProductosController : Controller
             return "La categoría es obligatoria.";
         }
 
-        var categoria = await _db.CategoriasProducto.FirstOrDefaultAsync(c => c.IdCategoriaProducto == modelo.IdCategoriaProducto);
+        var categoria = await _db.CategoriasProducto.FirstOrDefaultAsync(c => c.IdCategoriaProducto == modelo.IdCategoriaProducto && c.IdEmpresa == idEmpresa);
         if (categoria is null)
         {
             return "La categoría seleccionada no existe.";
@@ -471,6 +482,7 @@ public class ProductosController : Controller
 
     private static object Snapshot(Producto p) => new
     {
+        p.IdEmpresa,
         p.IdCategoriaProducto,
         p.Codigo,
         p.CodigoBarras,

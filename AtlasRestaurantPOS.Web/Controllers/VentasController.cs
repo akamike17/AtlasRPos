@@ -1,4 +1,4 @@
-﻿using System.Data;
+using System.Data;
 using System.Security.Claims;
 using AtlasRestaurantPOS.Web.Constants;
 using AtlasRestaurantPOS.Web.Data;
@@ -61,7 +61,7 @@ public class VentasController : Controller
 
         var categorias = await _db.CategoriasProducto
             .AsNoTracking()
-            .Where(cat => cat.Activo && cat.Productos.Any(p => p.Activo))
+            .Where(cat => cat.IdEmpresa == idEmpresa && cat.Activo && cat.Productos.Any(p => p.IdEmpresa == idEmpresa && p.Activo))
             .OrderBy(cat => cat.Nombre)
             .Select(cat => new CategoriaVentasViewModel
             {
@@ -277,9 +277,16 @@ public class VentasController : Controller
                     return JsonError("La comanda no está abierta.");
                 }
 
+                var idEmpresaVal = ObtenerClaimInt("IdEmpresa");
+                if (idEmpresaVal is null)
+                {
+                    await tx.RollbackAsync();
+                    return JsonError("No se pudo identificar tu empresa.");
+                }
+
                 var producto = await _db.Productos
                     .AsNoTracking()
-                    .Where(p => p.IdProducto == modelo.IdProducto && p.Activo && p.CategoriaProducto.Activo)
+                    .Where(p => p.IdProducto == modelo.IdProducto && p.IdEmpresa == idEmpresaVal.Value && p.Activo && p.CategoriaProducto.Activo)
                     .FirstOrDefaultAsync();
 
                 if (producto is null)
@@ -299,7 +306,7 @@ public class VentasController : Controller
 
                 // Validar stock proyectado de la comanda (determinista por IdInsumo)
                 var idSucursalVal = ObtenerClaimInt("IdSucursal");
-                if (idSucursalVal is null)
+                if (idSucursalVal is null || idEmpresaVal is null)
                 {
                     await tx.RollbackAsync();
                     return JsonError("No se pudo identificar tu sucursal.");
@@ -317,7 +324,7 @@ public class VentasController : Controller
 
                 listaModificada.Add((producto.IdProducto, modelo.Cantidad));
 
-                var valido = await ValidarStockProyectadoAsync(listaModificada, idSucursalVal.Value);
+                var valido = await ValidarStockProyectadoAsync(listaModificada, idSucursalVal.Value, idEmpresaVal.Value);
                 if (!valido.ok)
                 {
                     await tx.RollbackAsync();
@@ -425,7 +432,8 @@ public class VentasController : Controller
 
                 // Validar stock proyectado de la comanda (determinista por IdInsumo)
                 var idSucursalVal = ObtenerClaimInt("IdSucursal");
-                if (idSucursalVal is null)
+                var idEmpresaVal = ObtenerClaimInt("IdEmpresa");
+                if (idSucursalVal is null || idEmpresaVal is null)
                 {
                     await tx.RollbackAsync();
                     return JsonError("No se pudo identificar tu sucursal.");
@@ -443,7 +451,7 @@ public class VentasController : Controller
 
                 listaModificada.Add((detalle.IdProducto, modelo.Cantidad));
 
-                var valido = await ValidarStockProyectadoAsync(listaModificada, idSucursalVal.Value);
+                var valido = await ValidarStockProyectadoAsync(listaModificada, idSucursalVal.Value, idEmpresaVal.Value);
                 if (!valido.ok)
                 {
                     await tx.RollbackAsync();
@@ -691,7 +699,7 @@ public class VentasController : Controller
                 if (comandaCerrada)
                 {
                     // Consumir inventario atómicamente antes de cerrar la comanda.
-                    var consumo = await ConsumirInventarioComandaAsync(comanda, idSucursal.Value, idCaja.Value, idSesion.Value, idUsuario.Value);
+                    var consumo = await ConsumirInventarioComandaAsync(comanda, idSucursal.Value, idEmpresa.Value, idCaja.Value, idSesion.Value, idUsuario.Value);
                     if (!consumo.ok)
                     {
                         await tx.RollbackAsync();
@@ -1078,10 +1086,15 @@ public class VentasController : Controller
 
     private async Task<bool> ValidarSesionCajaAsync(int idUsuario, int idCaja, long idSesion)
     {
+        var idSucursal = ObtenerClaimInt("IdSucursal");
+        var idEmpresa = ObtenerClaimInt("IdEmpresa");
+        if (idSucursal is null || idEmpresa is null) return false;
         return await _db.Cajas
             .AsNoTracking()
             .AnyAsync(c =>
                 c.IdCaja == idCaja &&
+                c.IdSucursal == idSucursal.Value &&
+                c.Sucursal.IdEmpresa == idEmpresa.Value &&
                 c.Activo &&
                 c.Sucursal.Activo &&
                 c.Sucursal.Empresa.Activo &&
@@ -1238,15 +1251,25 @@ public class VentasController : Controller
     // Valida el stock proyectado para una lista de (IdProducto, Cantidad) en una sucursal.
     // No modifica existencias; bloquea ExistenciasInsumo con SELECT ... FOR UPDATE en orden por IdInsumo.
     // Retorna (ok:true) si hay stock suficiente, o (false, mensaje) si falta stock.
-    private async Task<(bool ok, string mensaje)> ValidarStockProyectadoAsync(IEnumerable<(int IdProducto, decimal Cantidad)> productos, int idSucursal)
+    private async Task<(bool ok, string mensaje)> ValidarStockProyectadoAsync(IEnumerable<(int IdProducto, decimal Cantidad)> productos, int idSucursal, int idEmpresa)
     {
         var lista = productos.ToList();
         if (!lista.Any()) return (true, string.Empty);
 
         var productoIds = lista.Select(p => p.IdProducto).Distinct().ToList();
 
+        var productosValidos = await _db.Productos
+            .Where(p => productoIds.Contains(p.IdProducto) && p.IdEmpresa == idEmpresa && p.Activo && p.CategoriaProducto.Activo)
+            .Select(p => p.IdProducto)
+            .Distinct()
+            .CountAsync();
+        if (productosValidos != productoIds.Count)
+        {
+            return (false, "Uno de los productos de la comanda no pertenece a tu empresa o está inactivo.");
+        }
+
         var recetas = await _db.RecetasProducto
-            .Where(r => productoIds.Contains(r.IdProducto))
+            .Where(r => productoIds.Contains(r.IdProducto) && r.Producto.IdEmpresa == idEmpresa && r.Insumo.IdEmpresa == idEmpresa)
             .AsNoTracking()
             .ToListAsync();
 
@@ -1339,7 +1362,7 @@ public class VentasController : Controller
         return ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage).FirstOrDefault() ?? "Datos inválidos.";
     }
 
-    private async Task<(bool ok, string mensaje)> ConsumirInventarioComandaAsync(Comanda comanda, int idSucursal, int idCaja, long idSesion, int idUsuario)
+    private async Task<(bool ok, string mensaje)> ConsumirInventarioComandaAsync(Comanda comanda, int idSucursal, int idEmpresa, int idCaja, long idSesion, int idUsuario)
     {
         var detalles = await _db.ComandaDetalles
             .Where(d => d.IdComanda == comanda.IdComanda)
@@ -1349,8 +1372,18 @@ public class VentasController : Controller
         if (!detalles.Any()) return (true, string.Empty);
 
         var productoIds = detalles.Select(d => d.IdProducto).Distinct().ToList();
+
+        var productosValidos = await _db.Productos
+            .Where(p => productoIds.Contains(p.IdProducto) && p.IdEmpresa == idEmpresa && p.Activo && p.CategoriaProducto.Activo)
+            .Select(p => p.IdProducto)
+            .Distinct()
+            .CountAsync();
+        if (productosValidos != productoIds.Count)
+        {
+            return (false, "Uno de los productos de la comanda no pertenece a tu empresa o está inactivo.");
+        }
         var recetas = await _db.RecetasProducto
-            .Where(r => productoIds.Contains(r.IdProducto))
+            .Where(r => productoIds.Contains(r.IdProducto) && r.Producto.IdEmpresa == idEmpresa && r.Insumo.IdEmpresa == idEmpresa)
             .AsNoTracking()
             .ToListAsync();
 
@@ -1372,6 +1405,14 @@ public class VentasController : Controller
         {
             var idInsumo = kv.Key;
             var cantidadNecesaria = kv.Value;
+
+            var consumoExistente = await _db.MovimientosInventario
+                .AsNoTracking()
+                .AnyAsync(m => m.IdComanda == comanda.IdComanda && m.IdInsumo == idInsumo && m.Tipo == TiposMovimientoInventario.VENTA);
+            if (consumoExistente)
+            {
+                continue;
+            }
 
             var existencia = await _db.ExistenciasInsumo
                 .FromSqlRaw("SELECT * FROM ExistenciasInsumo WHERE IdSucursal = {0} AND IdInsumo = {1} FOR UPDATE", idSucursal, idInsumo)

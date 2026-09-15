@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using AtlasRestaurantPOS.Web.Models;
 
 namespace AtlasRestaurantPOS.Web.Data;
@@ -263,10 +263,16 @@ public class AtlasRestaurantDbContext : DbContext
         {
             e.HasKey(x => x.IdCategoriaProducto);
 
+            e.Property(x => x.IdEmpresa);
             e.Property(x => x.Nombre).IsRequired().HasMaxLength(150);
             e.Property(x => x.Descripcion).HasMaxLength(500);
 
-            e.HasIndex(x => x.Nombre).IsUnique();
+            e.HasIndex(x => new { x.IdEmpresa, x.Nombre }).IsUnique();
+
+            e.HasOne(x => x.Empresa)
+                .WithMany()
+                .HasForeignKey(x => x.IdEmpresa)
+                .OnDelete(DeleteBehavior.Restrict);
 
             e.HasMany(x => x.Productos)
                 .WithOne(x => x.CategoriaProducto)
@@ -281,6 +287,8 @@ public class AtlasRestaurantDbContext : DbContext
         {
             e.HasKey(x => x.IdProducto);
 
+            e.Property(x => x.IdEmpresa);
+
             e.Property(x => x.Nombre).IsRequired().HasMaxLength(150);
             e.Property(x => x.Descripcion).HasMaxLength(500);
             e.Property(x => x.Precio).HasPrecision(18, 2);
@@ -293,8 +301,13 @@ public class AtlasRestaurantDbContext : DbContext
             e.Property(x => x.Codigo).HasMaxLength(50).UseCollation("utf8mb4_bin");
             e.Property(x => x.CodigoBarras).HasMaxLength(50).UseCollation("utf8mb4_bin");
 
-            e.HasIndex(x => x.Codigo).IsUnique();
-            e.HasIndex(x => x.CodigoBarras).IsUnique();
+            e.HasIndex(x => new { x.IdEmpresa, x.Codigo }).IsUnique();
+            e.HasIndex(x => new { x.IdEmpresa, x.CodigoBarras }).IsUnique();
+
+            e.HasOne(x => x.Empresa)
+                .WithMany()
+                .HasForeignKey(x => x.IdEmpresa)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 
@@ -726,6 +739,7 @@ public class AtlasRestaurantDbContext : DbContext
             e.HasIndex(x => x.IdCaja);
             e.HasIndex(x => x.IdSesionCaja);
             e.HasIndex(x => x.IdComandaDetalle);
+            e.HasIndex(x => new { x.IdComanda, x.IdInsumo, x.Tipo }).IsUnique();
 
             e.HasOne(x => x.Insumo)
                .WithMany(x => x.Movimientos)

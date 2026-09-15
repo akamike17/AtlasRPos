@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using AtlasRestaurantPOS.Web.Constants;
 using AtlasRestaurantPOS.Web.Data;
 using AtlasRestaurantPOS.Web.Models;
@@ -31,7 +32,9 @@ public class MesasController : Controller
     [HttpGet]
     public async Task<IActionResult> Buscar(string? termino = null)
     {
-        var query = _db.Mesas.AsNoTracking();
+        var idEmpresa = ObtenerClaimInt("IdEmpresa");
+        if (idEmpresa is null) return JsonError("No se pudo identificar tu empresa.");
+        var query = _db.Mesas.AsNoTracking().Where(m => m.Sucursal.IdEmpresa == idEmpresa.Value);
 
         if (!string.IsNullOrWhiteSpace(termino))
         {
@@ -64,9 +67,11 @@ public class MesasController : Controller
     [HttpGet]
     public async Task<IActionResult> Obtener(int id)
     {
+        var idEmpresa = ObtenerClaimInt("IdEmpresa");
+        if (idEmpresa is null) return JsonError("No se pudo identificar tu empresa.");
         var mesa = await _db.Mesas
             .AsNoTracking()
-            .Where(m => m.IdMesa == id)
+            .Where(m => m.IdMesa == id && m.Sucursal.IdEmpresa == idEmpresa.Value)
             .Select(m => new
             {
                 m.IdMesa,
@@ -163,7 +168,7 @@ public class MesasController : Controller
                 return JsonError(error);
             }
 
-            var mesa = await _db.Mesas.FirstOrDefaultAsync(m => m.IdMesa == modelo.IdMesa);
+            var mesa = await _db.Mesas.FirstOrDefaultAsync(m => m.IdMesa == modelo.IdMesa && m.Sucursal.IdEmpresa == (ObtenerClaimInt("IdEmpresa") ?? 0));
             if (mesa is null)
             {
                 return JsonError("La mesa no existe.");
@@ -208,7 +213,7 @@ public class MesasController : Controller
     {
         try
         {
-            var mesa = await _db.Mesas.FirstOrDefaultAsync(m => m.IdMesa == id);
+            var mesa = await _db.Mesas.FirstOrDefaultAsync(m => m.IdMesa == id && m.Sucursal.IdEmpresa == (ObtenerClaimInt("IdEmpresa") ?? 0));
             if (mesa is null)
             {
                 return JsonError("La mesa no existe.");
@@ -245,7 +250,7 @@ public class MesasController : Controller
     {
         try
         {
-            var mesa = await _db.Mesas.FirstOrDefaultAsync(m => m.IdMesa == id);
+            var mesa = await _db.Mesas.FirstOrDefaultAsync(m => m.IdMesa == id && m.Sucursal.IdEmpresa == (ObtenerClaimInt("IdEmpresa") ?? 0));
             if (mesa is null)
             {
                 return JsonError("La mesa no existe.");
@@ -294,9 +299,15 @@ public class MesasController : Controller
             return "La sucursal es obligatoria.";
         }
 
+        var idEmpresa = ObtenerClaimInt("IdEmpresa");
+        if (idEmpresa is null)
+        {
+            return "No se pudo identificar tu empresa.";
+        }
+
         var sucursal = await _db.Sucursales
             .Include(s => s.Empresa)
-            .FirstOrDefaultAsync(s => s.IdSucursal == modelo.IdSucursal);
+            .FirstOrDefaultAsync(s => s.IdSucursal == modelo.IdSucursal && s.IdEmpresa == idEmpresa.Value);
 
         if (sucursal is null)
         {
@@ -324,6 +335,12 @@ public class MesasController : Controller
         m.Estado,
         m.Activo
     };
+
+    private int? ObtenerClaimInt(string tipo)
+    {
+        var valor = User.FindFirstValue(tipo);
+        return int.TryParse(valor, out var id) ? id : null;
+    }
 
     private JsonResult JsonOk(string mensaje)
     {
